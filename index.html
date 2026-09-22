@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="A personal hobby and learning tracker." />
+  <title>My Hobby Atlas</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#">
+      <span class="brand-mark">✦</span>
+      <span>
+        <strong>My Hobby Atlas</strong>
+        <small>Learn • Practice • Remember</small>
+      </span>
+    </a>
+
+    <div class="topbar-actions">
+      <button id="themeToggle" class="icon-button" aria-label="Toggle theme">☾</button>
+      <button id="addButton" class="primary-button">+ Add learning item</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">PERSONAL LEARNING DASHBOARD</p>
+        <h1>Keep a record of everything you’re curious about.</h1>
+        <p class="hero-copy">
+          Track what you want to learn, what you’re learning now, and what you’ve already explored.
+        </p>
+      </div>
+      <div class="hero-card">
+        <span class="hero-card-label">Today’s prompt</span>
+        <p id="dailyPrompt">What is one tiny thing you can practice for 20 minutes today?</p>
+      </div>
+    </section>
+
+    <section class="stats-grid" aria-label="Learning statistics">
+      <article class="stat-card">
+        <span>Planned</span>
+        <strong id="plannedCount">0</strong>
+      </article>
+      <article class="stat-card">
+        <span>Learning</span>
+        <strong id="learningCount">0</strong>
+      </article>
+      <article class="stat-card">
+        <span>Learned</span>
+        <strong id="learnedCount">0</strong>
+      </article>
+      <article class="stat-card">
+        <span>Hobbies</span>
+        <strong id="hobbyCount">0</strong>
+      </article>
+    </section>
+
+    <section class="toolbar">
+      <div class="search-wrap">
+        <span>⌕</span>
+        <input id="searchInput" type="search" placeholder="Search hobbies, topics, notes or tags…" />
+      </div>
+
+      <select id="statusFilter" aria-label="Filter by status">
+        <option value="all">All statuses</option>
+        <option value="planned">Planned</option>
+        <option value="learning">Learning</option>
+        <option value="learned">Learned</option>
+      </select>
+
+      <select id="hobbyFilter" aria-label="Filter by hobby">
+        <option value="all">All hobbies</option>
+      </select>
+    </section>
+
+    <section class="section-heading">
+      <div>
+        <p class="eyebrow">LEARNING LIBRARY</p>
+        <h2>Your current map</h2>
+      </div>
+      <div class="data-actions">
+        <button id="exportButton" class="secondary-button">Export JSON</button>
+        <label class="secondary-button file-label">
+          Import JSON
+          <input id="importInput" type="file" accept="application/json" hidden />
+        </label>
+      </div>
+    </section>
+
+    <section id="cards" class="cards-grid" aria-live="polite"></section>
+
+    <section class="ideas-panel">
+      <div>
+        <p class="eyebrow">MAKE IT YOURS</p>
+        <h2>Ideas worth adding later</h2>
+      </div>
+      <div class="ideas-grid">
+        <article>
+          <span>01</span>
+          <h3>Learning streaks</h3>
+          <p>Track days you practiced each hobby and render a GitHub-style heatmap.</p>
+        </article>
+        <article>
+          <span>02</span>
+          <h3>Monthly retrospectives</h3>
+          <p>Record what improved, what stalled, and what you want to change next month.</p>
+        </article>
+        <article>
+          <span>03</span>
+          <h3>Knowledge map</h3>
+          <p>Connect topics visually: basics → intermediate ideas → projects you completed.</p>
+        </article>
+        <article>
+          <span>04</span>
+          <h3>“What should I do now?”</h3>
+          <p>Pick a random 15–30 minute task from your active hobbies when you have free time.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="itemDialog">
+    <form id="itemForm" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">NEW ENTRY</p>
+          <h2>Add to your learning map</h2>
+        </div>
+        <button type="button" id="closeDialog" class="icon-button">×</button>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          Topic
+          <input name="title" required placeholder="e.g. Portrait lighting" />
+        </label>
+
+        <label>
+          Hobby
+          <input name="hobby" required placeholder="e.g. Photography" />
+        </label>
+
+        <label>
+          Status
+          <select name="status">
+            <option value="planned">Planned</option>
+            <option value="learning">Learning</option>
+            <option value="learned">Learned</option>
+          </select>
+        </label>
+
+        <label>
+          Progress %
+          <input name="progress" type="number" min="0" max="100" value="0" />
+        </label>
+
+        <label class="full-width">
+          Notes
+          <textarea name="notes" rows="4" placeholder="What are you trying to understand or practice?"></textarea>
+        </label>
+
+        <label class="full-width">
+          Tags
+          <input name="tags" placeholder="beginner, project, theory" />
+        </label>
+
+        <label class="full-width">
+          Resource URL
+          <input name="resource" type="url" placeholder="https://…" />
+        </label>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" id="cancelButton" class="secondary-button">Cancel</button>
+        <button type="submit" class="primary-button">Save item</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="cardTemplate">
+    <article class="learning-card">
+      <div class="card-topline">
+        <span class="hobby-pill"></span>
+        <span class="status-pill"></span>
+      </div>
+      <h3 class="card-title"></h3>
+      <p class="card-notes"></p>
+      <div class="tags"></div>
+
+      <div class="progress-row">
+        <div class="progress-copy">
+          <span>Progress</span>
+          <strong class="progress-value"></strong>
+        </div>
+        <div class="progress-track">
+          <div class="progress-bar"></div>
+        </div>
+      </div>
+
+      <div class="card-footer">
+        <a class="resource-link" target="_blank" rel="noreferrer">Open resource ↗</a>
+        <div>
+          <button class="mini-button edit-button">Edit</button>
+          <button class="mini-button delete-button">Delete</button>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
