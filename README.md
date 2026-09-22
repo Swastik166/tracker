@@ -1,64 +1,48 @@
-# My Hobby Atlas
+# My Learning Atlas
 
-A small static personal website for tracking hobbies, learning goals, active topics and completed learning.
+A static personal hobby and learning dashboard for GitHub Pages.
 
-## Features
+## What it tracks
 
-- Track items as **Planned**, **Learning**, or **Learned**
-- Group entries by hobby
-- Add notes, tags, progress and resource links
-- Search and filter
+- Learning topics: planned, learning, and learned
+- Next actions and progress
+- Practice/activity sessions with a heatmap and streak
+- Projects with a separate resource shelf for each project
+- Milestones: firsts, completions, personal bests, consistency goals, project markers, or custom milestones
+- Curiosity Inbox for interesting ideas that are not commitments yet
+- Archive for retired or paused learning entries
+- JSON backup/import
 - Dark mode
-- Browser-local persistence with `localStorage`
-- Import/export your data as JSON
-- Responsive layout
-- No framework or build step required
 
-## Run locally
+## Data storage in this version
 
-Just open `index.html` in your browser, or serve the folder with a simple local server.
+This version still uses browser `localStorage`. The full application state is stored under one key (`learning-atlas-state-v2`) so it will be easier to replace the storage layer with a remote database/API later.
 
-For example:
+Entries remain on the same browser/device between visits, but they do not automatically sync between devices and are not written back to the GitHub repository.
 
-```bash
-python -m http.server 8000
-```
-
-Then open `http://localhost:8000`.
+Use **Export data** periodically for a portable JSON backup.
 
 ## Publish on GitHub Pages
 
-1. Create a new GitHub repository, for example `hobby-atlas`.
-2. Upload these files to the repository root.
-3. Commit and push.
-4. In GitHub, open **Settings → Pages**.
-5. Under **Build and deployment**, choose **Deploy from a branch**.
-6. Select your main branch and `/ (root)`.
+1. Create a GitHub repository.
+2. Put `index.html`, `style.css`, and `app.js` at the repository root.
+3. Push to GitHub.
+4. Open **Settings → Pages**.
+5. Choose **Deploy from a branch**.
+6. Select `main` and `/ (root)`.
 7. Save.
 
-GitHub will provide the public Pages URL.
+No build step is required.
 
-## Important data note
+## Good future storage upgrades
 
-Entries added through the website are stored in your browser's `localStorage`. That means:
+When persistent cross-device editing is wanted, the front-end can keep almost the same data model and replace `loadState()` / `saveState()` with calls to a remote storage layer.
 
-- they are not automatically synced across devices;
-- clearing browser data can remove them;
-- use **Export JSON** regularly to back them up.
+Good options include:
 
-A future version can store content directly in the GitHub repository, use Supabase/Firebase, or use a GitHub-backed CMS.
+- **Supabase** — best balance for login + database + simple JavaScript API.
+- **Firebase** — also suitable for authentication and synced data.
+- **GitHub API** — can write JSON/Markdown back into the repository, but requires authentication and is less pleasant for frequent edits.
+- **A tiny serverless API** — maximum control, more setup.
 
-## Good next upgrades
-
-- Practice streak calendar / heatmap
-- Monthly learning retrospectives
-- Reading / course / video resource queue
-- Projects linked to each hobby
-- Skill trees with prerequisites
-- Time spent per hobby
-- "Pick something for me" random practice button
-- Milestones and badges
-- Public/private toggle for individual entries
-- Photo gallery for physical/creative hobbies
-- Markdown notes
-- GitHub contribution-style activity calendar
+For a private personal dashboard, Supabase or Firebase is the straightforward next step if automatic syncing becomes important.
