@@ -69,12 +69,18 @@ a { color: inherit; }
 
 .home-main { padding: 64px 0 80px; }
 .home-intro { max-width: 620px; margin-bottom: 54px; }
-.home-intro h1,
-.hobby-heading h1 {
+.home-intro h1 {
   margin: 0 0 10px;
   font-size: clamp(32px, 5vw, 48px);
   line-height: 1.05;
   letter-spacing: -.045em;
+  font-weight: 650;
+}
+.hobby-heading h1 {
+  margin: 0 0 10px;
+  font-size: clamp(44px, 7vw, 68px);
+  line-height: .98;
+  letter-spacing: -.052em;
   font-weight: 650;
 }
 .home-intro p,
@@ -268,6 +274,7 @@ p { margin-top: 0; }
   gap: 10px;
   margin-bottom: 12px;
 }
+.toolbar-three { grid-template-columns: 1fr auto auto; }
 .toolbar input,
 .toolbar select,
 .form-grid input,
@@ -370,6 +377,46 @@ p { margin-top: 0; }
 .milestone-content { display: flex; gap: 10px; }
 .milestone-row.is-done .row-title { text-decoration: line-through; color: var(--muted); }
 
+
+.row-labels { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.type-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+.item-title { font-size: 16px; }
+.compact-empty { padding: 10px 0; }
+
+.milestone-groups { display: grid; gap: 34px; }
+.subsection-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.trophy-section { padding-top: 2px; }
+.trophy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.trophy-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 14px;
+}
+.trophy-mark { font-size: 18px; line-height: 1; margin-bottom: 10px; filter: grayscale(.35); }
+.trophy-title { font-weight: 650; line-height: 1.35; }
+.trophy-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+.trophy-empty { grid-column: 1 / -1; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+
 .empty-state { padding: 20px 2px; color: var(--muted); font-size: 14px; }
 
 /* Dialogs */
@@ -416,19 +463,23 @@ dialog::backdrop { background: rgba(0,0,0,.28); }
   .summary-item:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .hobby-heading { align-items: flex-start; flex-direction: column; }
   .hobby-meta { display: none; }
-  .toolbar { grid-template-columns: 1fr; }
+  .toolbar,
+  .toolbar-three { grid-template-columns: 1fr; }
+  .trophy-grid { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 560px) {
   .page-width { width: min(100% - 22px, 980px); }
-  .home-intro h1,
-  .hobby-heading h1 { font-size: 34px; }
+  .home-intro h1 { font-size: 34px; }
+  .hobby-heading h1 { font-size: 42px; }
   .hobby-link { grid-template-columns: 1fr auto; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .full { grid-column: auto; }
   .item-top,
   .project-top,
   .curiosity-top,
-  .archive-top { flex-direction: column; }
+  .archive-top,
+  .milestone-top { flex-direction: column; }
+  .trophy-grid { grid-template-columns: 1fr; }
   .row-actions { justify-content: flex-start; }
 }

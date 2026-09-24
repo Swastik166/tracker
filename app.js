@@ -28,24 +28,64 @@ function slugify(value = "") {
     .replace(/^-+|-+$/g, "");
 }
 
+function normalizedStatus(status = "planned") {
+  return ({
+    planned: "planned",
+    idea: "planned",
+    learning: "active",
+    active: "active",
+    paused: "paused",
+    learned: "done",
+    done: "done"
+  })[status] || "planned";
+}
+
 function normalizeState(input = {}) {
-  return {
-    items: Array.isArray(input.items) ? input.items.map(x => ({
+  const itemMap = new Map();
+
+  (Array.isArray(input.items) ? input.items : []).forEach(x => {
+    const item = {
       ...x,
       hobbyId: x.hobbyId || slugify(x.hobby || "general"),
+      kind: x.kind === "project" ? "project" : "learning",
+      status: normalizedStatus(x.status),
       archived: Boolean(x.archived),
       nextAction: x.nextAction || "",
-      tags: Array.isArray(x.tags) ? x.tags : []
-    })) : [],
-    projects: Array.isArray(input.projects) ? input.projects.map(x => ({
-      ...x,
-      hobbyId: x.hobbyId || slugify(x.hobby || "general"),
+      tags: Array.isArray(x.tags) ? x.tags : [],
       resources: Array.isArray(x.resources) ? x.resources : []
-    })) : [],
+    };
+    itemMap.set(item.id || crypto.randomUUID(), item);
+  });
+
+  // v3 kept projects in a separate array. Convert them once into normal items.
+  (Array.isArray(input.projects) ? input.projects : []).forEach(project => {
+    const id = project.id || crypto.randomUUID();
+    if (itemMap.has(id)) return;
+    itemMap.set(id, {
+      id,
+      hobbyId: project.hobbyId || slugify(project.hobby || "general"),
+      kind: "project",
+      title: project.title || "Untitled project",
+      status: normalizedStatus(project.status),
+      progress: Math.min(100, Math.max(0, Number(project.progress) || 0)),
+      notes: project.description || "",
+      nextAction: project.nextAction || "",
+      tags: Array.isArray(project.tags) ? project.tags : [],
+      resources: Array.isArray(project.resources) ? project.resources : [],
+      archived: Boolean(project.archived)
+    });
+  });
+
+  return {
+    items: [...itemMap.values()],
+    projects: [],
     milestones: Array.isArray(input.milestones) ? input.milestones.map(x => ({
       ...x,
       hobbyId: x.hobbyId || slugify(x.hobby || "general"),
-      done: Boolean(x.done)
+      status: x.status === "achieved" || x.done ? "achieved" : "working",
+      targetDate: x.targetDate || "",
+      achievedDate: x.achievedDate || (x.done ? (x.targetDate || "") : ""),
+      done: undefined
     })) : [],
     curiosities: Array.isArray(input.curiosities) ? input.curiosities.map(x => ({
       ...x,
@@ -54,7 +94,8 @@ function normalizeState(input = {}) {
     activity: Array.isArray(input.activity) ? input.activity.map(x => {
       let hobbyId = x.hobbyId;
       if (!hobbyId && x.itemId) {
-        const item = (input.items || []).find(item => item.id === x.itemId);
+        const sourceItems = Array.isArray(input.items) ? input.items : [];
+        const item = sourceItems.find(item => item.id === x.itemId);
         hobbyId = item ? (item.hobbyId || slugify(item.hobby || "general")) : "general";
       }
       return { ...x, hobbyId: hobbyId || "general" };
@@ -66,7 +107,11 @@ function normalizeState(input = {}) {
 function loadState() {
   const saved = localStorage.getItem(STATE_KEY);
   if (saved) {
-    try { return normalizeState(JSON.parse(saved)); } catch {}
+    try {
+      const normalized = normalizeState(JSON.parse(saved));
+      localStorage.setItem(STATE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch {}
   }
 
   const legacy = localStorage.getItem(LEGACY_STATE_KEY);
@@ -178,14 +223,15 @@ function renderHome() {
   $("#hobbyCount").textContent = `${registry.length} ${registry.length === 1 ? "hobby" : "hobbies"}`;
 
   list.innerHTML = registry.map(hobby => {
-    const learning = state.items.filter(x => x.hobbyId === hobby.id && !x.archived && x.status === "learning").length;
-    const projects = state.projects.filter(x => x.hobbyId === hobby.id && x.status !== "done").length;
+    const items = state.items.filter(x => x.hobbyId === hobby.id && !x.archived);
+    const active = items.filter(x => x.status === "active").length;
+    const trophies = state.milestones.filter(x => x.hobbyId === hobby.id && x.status === "achieved").length;
     return `<a class="hobby-link" href="${escapeHTML(hobby.page)}">
       <span>
         <span class="hobby-name">${escapeHTML(hobby.name)}</span>
         <span class="hobby-description">${escapeHTML(hobby.description || "")}</span>
       </span>
-      <span class="hobby-meta"><span>${learning} learning</span><span>${projects} projects</span><span>→</span></span>
+      <span class="hobby-meta"><span>${active} active</span><span>${trophies} milestones</span><span>→</span></span>
     </a>`;
   }).join("");
 
@@ -227,23 +273,22 @@ function renderHobbyShell(config) {
         </div>
         <div class="button-row">
           <button id="logActivityButton" class="quiet-button" type="button">Log activity</button>
-          <button id="addItemButton" class="primary-button" type="button">Add learning</button>
+          <button id="addItemButton" class="primary-button" type="button">Add item</button>
         </div>
       </section>
 
       <nav class="hobby-nav" aria-label="Page sections">
         <a href="#overview">Overview</a>
-        <a href="#learning">Learning</a>
-        <a href="#projects">Projects</a>
+        <a href="#work">Items</a>
         <a href="#milestones">Milestones</a>
         <a href="#curiosity">Curiosity</a>
         <a href="#archive">Archive</a>
       </nav>
 
       <section class="summary-row" aria-label="Hobby summary">
-        <div class="summary-item"><span>Learning</span><strong id="summaryLearning">0</strong></div>
-        <div class="summary-item"><span>Projects</span><strong id="summaryProjects">0</strong></div>
-        <div class="summary-item"><span>Milestones</span><strong id="summaryMilestones">0</strong></div>
+        <div class="summary-item"><span>Active</span><strong id="summaryActive">0</strong></div>
+        <div class="summary-item"><span>Done</span><strong id="summaryDone">0</strong></div>
+        <div class="summary-item"><span>Trophies</span><strong id="summaryTrophies">0</strong></div>
         <div class="summary-item"><span>Time logged</span><strong id="summaryTime">0m</strong></div>
       </section>
 
@@ -261,32 +306,25 @@ function renderHobbyShell(config) {
         </div>
       </section>
 
-      <section id="learning" class="section-block">
+      <section id="work" class="section-block">
         <div class="section-heading">
-          <div><h2>Learning</h2><p>Things I plan to learn, am learning now, or have finished.</p></div>
-          <button id="addItemButton2" class="quiet-button" type="button">Add learning</button>
+          <div><h2>Learning & projects</h2><p>Everything I’m working on in one place. The type is just a tag.</p></div>
+          <button id="addItemButton2" class="quiet-button" type="button">Add item</button>
         </div>
-        <div class="toolbar">
-          <input id="learningSearch" type="search" placeholder="Search learning…" />
-          <select id="learningStatus"><option value="all">All statuses</option><option value="planned">Planned</option><option value="learning">Learning</option><option value="learned">Learned</option></select>
+        <div class="toolbar toolbar-three">
+          <input id="itemSearch" type="search" placeholder="Search items…" />
+          <select id="itemStatus"><option value="all">All statuses</option><option value="planned">Planned</option><option value="active">Active</option><option value="paused">Paused</option><option value="done">Done</option></select>
+          <select id="itemKind"><option value="all">All types</option><option value="learning">Learning</option><option value="project">Project</option></select>
         </div>
-        <div id="learningList" class="item-list"></div>
-      </section>
-
-      <section id="projects" class="section-block">
-        <div class="section-heading">
-          <div><h2>Projects</h2><p>Things I’m making or working toward. Resources stay with the project they belong to.</p></div>
-          <button id="addProjectButton" class="quiet-button" type="button">Add project</button>
-        </div>
-        <div id="projectList" class="project-list"></div>
+        <div id="itemList" class="item-list"></div>
       </section>
 
       <section id="milestones" class="section-block">
         <div class="section-heading">
-          <div><h2>Milestones</h2><p>Firsts, completions, personal bests, and other markers worth keeping.</p></div>
+          <div><h2>Milestones</h2><p>What I’m working toward, and a record of what I’ve achieved.</p></div>
           <button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>
         </div>
-        <div id="milestoneList" class="milestone-list"></div>
+        <div id="milestoneList"></div>
       </section>
 
       <section id="curiosity" class="section-block">
@@ -314,13 +352,14 @@ function renderHobbyShell(config) {
 function dialogMarkup() {
   return `
   <dialog id="itemDialog"><form id="itemForm" class="dialog-body">
-    <div class="dialog-heading"><h2 id="itemDialogTitle">Add learning</h2><button type="button" class="dialog-close" data-close="itemDialog">×</button></div>
+    <div class="dialog-heading"><h2 id="itemDialogTitle">Add item</h2><button type="button" class="dialog-close" data-close="itemDialog">×</button></div>
     <div class="form-grid">
-      <label>Topic<input name="title" required /></label>
-      <label>Status<select name="status"><option value="planned">Planned</option><option value="learning">Learning</option><option value="learned">Learned</option></select></label>
+      <label>Title<input name="title" required /></label>
+      <label>Type<select name="kind"><option value="learning">Learning</option><option value="project">Project</option></select></label>
+      <label>Status<select name="status"><option value="planned">Planned</option><option value="active">Active</option><option value="paused">Paused</option><option value="done">Done</option></select></label>
       <label>Progress %<input name="progress" type="number" min="0" max="100" value="0" /></label>
-      <label>Tags<input name="tags" placeholder="theory, technique" /></label>
-      <label class="full">Notes<textarea name="notes" placeholder="What I want to understand or remember…"></textarea></label>
+      <label class="full">Tags<input name="tags" placeholder="theory, technique, reference" /></label>
+      <label class="full">Notes<textarea name="notes" placeholder="What I want to understand, build, or remember…"></textarea></label>
       <label class="full">Next action<input name="nextAction" placeholder="The next small thing to do" /></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="itemDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
@@ -331,26 +370,15 @@ function dialogMarkup() {
     <div class="form-grid">
       <label>Date<input name="date" type="date" required /></label>
       <label>Minutes<input name="minutes" type="number" min="1" max="1440" value="30" required /></label>
-      <label class="full">Related learning<select name="itemId" id="activityItemSelect"><option value="">General practice</option></select></label>
+      <label class="full">Related item<select name="itemId" id="activityItemSelect"><option value="">General practice</option></select></label>
       <label class="full">Note<input name="note" placeholder="What I worked on" /></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="activityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
-  <dialog id="projectDialog"><form id="projectForm" class="dialog-body">
-    <div class="dialog-heading"><h2 id="projectDialogTitle">Add project</h2><button type="button" class="dialog-close" data-close="projectDialog">×</button></div>
-    <div class="form-grid">
-      <label>Project<input name="title" required /></label>
-      <label>Status<select name="status"><option value="idea">Idea</option><option value="active">Active</option><option value="paused">Paused</option><option value="done">Done</option></select></label>
-      <label>Progress %<input name="progress" type="number" min="0" max="100" value="0" /></label>
-      <label class="full">Description<textarea name="description"></textarea></label>
-    </div>
-    <div class="dialog-actions"><button type="button" class="quiet-button" data-close="projectDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
-  </form></dialog>
-
   <dialog id="resourceDialog"><form id="resourceForm" class="dialog-body">
     <div class="dialog-heading"><h2>Add resource</h2><button type="button" class="dialog-close" data-close="resourceDialog">×</button></div>
-    <input name="projectId" type="hidden" />
+    <input name="itemId" type="hidden" />
     <div class="form-grid">
       <label>Label<input name="label" required /></label>
       <label>Type<input name="type" placeholder="Article, book, video…" /></label>
@@ -365,7 +393,8 @@ function dialogMarkup() {
     <div class="form-grid">
       <label>Milestone<input name="title" required /></label>
       <label>Type<select name="type"><option value="first">First</option><option value="completion">Completion</option><option value="personal-best">Personal best</option><option value="consistency">Consistency</option><option value="project">Project</option><option value="custom">Custom</option></select></label>
-      <label>Date<input name="targetDate" type="date" /></label>
+      <label>Status<select name="status"><option value="working">Working toward</option><option value="achieved">Already achieved</option></select></label>
+      <label>Date (optional)<input name="date" type="date" /></label>
       <label class="full">Note<input name="note" /></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="milestoneDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
@@ -389,19 +418,17 @@ function initHobbyPage(config) {
   bindThemeButton();
 
   let editingItemId = null;
-  let editingProjectId = null;
 
   const hobbyItems = () => state.items.filter(x => x.hobbyId === hobbyId);
   const activeItems = () => hobbyItems().filter(x => !x.archived);
-  const hobbyProjects = () => state.projects.filter(x => x.hobbyId === hobbyId);
   const hobbyMilestones = () => state.milestones.filter(x => x.hobbyId === hobbyId);
   const hobbyCuriosities = () => state.curiosities.filter(x => x.hobbyId === hobbyId);
   const hobbyActivity = () => state.activity.filter(x => x.hobbyId === hobbyId);
 
   function renderSummary() {
-    $("#summaryLearning").textContent = activeItems().filter(x => x.status === "learning").length;
-    $("#summaryProjects").textContent = hobbyProjects().filter(x => x.status !== "done").length;
-    $("#summaryMilestones").textContent = hobbyMilestones().filter(x => x.done).length;
+    $("#summaryActive").textContent = activeItems().filter(x => x.status === "active").length;
+    $("#summaryDone").textContent = activeItems().filter(x => x.status === "done").length;
+    $("#summaryTrophies").textContent = hobbyMilestones().filter(x => x.status === "achieved").length;
     const mins = hobbyActivity().reduce((sum, x) => sum + Number(x.minutes || 0), 0);
     $("#summaryTime").textContent = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
   }
@@ -421,35 +448,55 @@ function initHobbyPage(config) {
     target.innerHTML = entries.slice(0, 6).map(entry => `<div class="simple-row"><span>${escapeHTML(entry.note || "Practice session")}</span><span class="muted">${entry.minutes} min · ${formatDate(entry.date)}</span></div>`).join("");
   }
 
-  function renderLearning() {
-    const query = $("#learningSearch").value.trim().toLowerCase();
-    const status = $("#learningStatus").value;
+  function renderItems() {
+    const query = $("#itemSearch").value.trim().toLowerCase();
+    const status = $("#itemStatus").value;
+    const kind = $("#itemKind").value;
+    const order = { active: 0, planned: 1, paused: 2, done: 3 };
+
     const items = activeItems().filter(item => {
       const haystack = [item.title, item.notes, item.nextAction, ...(item.tags || [])].join(" ").toLowerCase();
-      return (!query || haystack.includes(query)) && (status === "all" || item.status === status);
-    });
-    const target = $("#learningList");
+      return (!query || haystack.includes(query)) &&
+        (status === "all" || item.status === status) &&
+        (kind === "all" || item.kind === kind);
+    }).sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+
+    const target = $("#itemList");
     if (!items.length) {
       target.innerHTML = `<div class="empty-state">Nothing here yet.</div>`;
       return;
     }
-    target.innerHTML = items.map(item => `<article class="item-row">
-      <div class="item-top">
-        <div class="row-main">
-          <div><span class="row-title">${escapeHTML(item.title)}</span> <span class="status">${escapeHTML(item.status)}</span></div>
-          ${item.notes ? `<p class="row-note">${escapeHTML(item.notes)}</p>` : ""}
-          ${item.nextAction ? `<p class="row-next"><strong>Next:</strong> ${escapeHTML(item.nextAction)}</p>` : ""}
-          ${(item.tags || []).length ? `<div class="tag-row">${item.tags.map(tag => `<span class="tag">#${escapeHTML(tag)}</span>`).join("")}</div>` : ""}
+
+    target.innerHTML = items.map(item => {
+      const isProject = item.kind === "project";
+      const resources = Array.isArray(item.resources) ? item.resources : [];
+      return `<article class="item-row">
+        <div class="item-top">
+          <div class="row-main">
+            <div class="row-labels"><span class="type-tag">${isProject ? "Project" : "Learning"}</span><span class="status">${escapeHTML(item.status)}</span></div>
+            <div class="row-title item-title">${escapeHTML(item.title)}</div>
+            ${item.notes ? `<p class="row-note">${escapeHTML(item.notes)}</p>` : ""}
+            ${item.nextAction ? `<p class="row-next"><strong>Next:</strong> ${escapeHTML(item.nextAction)}</p>` : ""}
+            ${(item.tags || []).length ? `<div class="tag-row">${item.tags.map(tag => `<span class="tag">#${escapeHTML(tag)}</span>`).join("")}</div>` : ""}
+          </div>
+          <div class="row-actions">
+            <button class="mini-button" data-log-item="${item.id}">Log</button>
+            ${isProject ? `<button class="mini-button" data-add-resource="${item.id}">Add resource</button>` : ""}
+            <button class="mini-button" data-edit-item="${item.id}">Edit</button>
+            <button class="mini-button" data-archive-item="${item.id}">Archive</button>
+          </div>
         </div>
-        <div class="row-actions">
-          <button class="mini-button" data-log-item="${item.id}">Log</button>
-          <button class="mini-button" data-edit-item="${item.id}">Edit</button>
-          <button class="mini-button" data-archive-item="${item.id}">Archive</button>
-        </div>
-      </div>
-      <div class="row-meta">${Number(item.progress || 0)}% complete</div>
-      <div class="progress-line"><span style="width:${Math.min(100, Math.max(0, Number(item.progress || 0)))}%"></span></div>
-    </article>`).join("");
+        <div class="row-meta">${Number(item.progress || 0)}% complete</div>
+        <div class="progress-line"><span style="width:${Math.min(100, Math.max(0, Number(item.progress || 0)))}%"></span></div>
+        ${isProject ? `<div class="resource-shelf">
+          <div class="resource-heading"><h4>Resources</h4><span class="muted">${resources.length}</span></div>
+          ${resources.length ? resources.map(resource => `<div class="resource-row">
+            <div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a><small>${escapeHTML(resource.type || "Resource")}${resource.note ? ` · ${escapeHTML(resource.note)}` : ""}</small></div>
+            <button class="mini-button danger" data-delete-resource="${resource.id}" data-item-id="${item.id}">Remove</button>
+          </div>`).join("") : `<div class="empty-state compact-empty">No resources saved for this project.</div>`}
+        </div>` : ""}
+      </article>`;
+    }).join("");
 
     $$('[data-log-item]').forEach(button => button.addEventListener("click", () => openActivity(button.dataset.logItem)));
     $$('[data-edit-item]').forEach(button => button.addEventListener("click", () => openItem(state.items.find(x => x.id === button.dataset.editItem))));
@@ -457,79 +504,74 @@ function initHobbyPage(config) {
       const item = state.items.find(x => x.id === button.dataset.archiveItem);
       if (item) { item.archived = true; saveState(); refresh(); }
     }));
-  }
-
-  function renderProjects() {
-    const projects = hobbyProjects();
-    const target = $("#projectList");
-    if (!projects.length) {
-      target.innerHTML = `<div class="empty-state">No projects yet.</div>`;
-      return;
-    }
-    target.innerHTML = projects.map(project => `<article class="project-row">
-      <div class="project-top">
-        <div class="row-main">
-          <div><span class="row-title">${escapeHTML(project.title)}</span> <span class="status">${escapeHTML(project.status)}</span></div>
-          ${project.description ? `<p class="project-description">${escapeHTML(project.description)}</p>` : ""}
-          <div class="row-meta">${Number(project.progress || 0)}% complete</div>
-          <div class="progress-line"><span style="width:${Math.min(100, Math.max(0, Number(project.progress || 0)))}%"></span></div>
-        </div>
-        <div class="row-actions">
-          <button class="mini-button" data-add-resource="${project.id}">Add resource</button>
-          <button class="mini-button" data-edit-project="${project.id}">Edit</button>
-          <button class="mini-button danger" data-delete-project="${project.id}">Delete</button>
-        </div>
-      </div>
-      <div class="resource-shelf">
-        <div class="resource-heading"><h4>Resources</h4><span class="muted">${(project.resources || []).length}</span></div>
-        ${(project.resources || []).length ? (project.resources || []).map(resource => `<div class="resource-row">
-          <div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a><small>${escapeHTML(resource.type || "Resource")}${resource.note ? ` · ${escapeHTML(resource.note)}` : ""}</small></div>
-          <button class="mini-button danger" data-delete-resource="${resource.id}" data-project-id="${project.id}">Remove</button>
-        </div>`).join("") : `<div class="empty-state">No resources saved for this project.</div>`}
-      </div>
-    </article>`).join("");
-
     $$('[data-add-resource]').forEach(button => button.addEventListener("click", () => openResource(button.dataset.addResource)));
-    $$('[data-edit-project]').forEach(button => button.addEventListener("click", () => openProject(state.projects.find(x => x.id === button.dataset.editProject))));
-    $$('[data-delete-project]').forEach(button => button.addEventListener("click", () => {
-      if (confirm("Delete this project and its resources?")) {
-        state.projects = state.projects.filter(x => x.id !== button.dataset.deleteProject);
-        saveState(); refresh();
-      }
-    }));
     $$('[data-delete-resource]').forEach(button => button.addEventListener("click", () => {
-      const project = state.projects.find(x => x.id === button.dataset.projectId);
-      if (project) {
-        project.resources = (project.resources || []).filter(x => x.id !== button.dataset.deleteResource);
-        saveState(); renderProjects();
+      const item = state.items.find(x => x.id === button.dataset.itemId);
+      if (item) {
+        item.resources = (item.resources || []).filter(x => x.id !== button.dataset.deleteResource);
+        saveState(); renderItems();
       }
     }));
   }
 
   function renderMilestones() {
     const milestones = hobbyMilestones();
+    const working = milestones.filter(x => x.status !== "achieved");
+    const achieved = milestones.filter(x => x.status === "achieved")
+      .sort((a, b) => String(b.achievedDate || "").localeCompare(String(a.achievedDate || "")));
     const target = $("#milestoneList");
-    if (!milestones.length) {
-      target.innerHTML = `<div class="empty-state">No milestones yet.</div>`;
-      return;
-    }
-    target.innerHTML = milestones.map(milestone => `<article class="milestone-row ${milestone.done ? "is-done" : ""}">
+
+    const workingHTML = working.length ? working.map(milestone => `<article class="milestone-row">
       <div class="milestone-top">
-        <div class="milestone-content">
-          <button class="check-button ${milestone.done ? "done" : ""}" data-toggle-milestone="${milestone.id}" aria-label="Toggle milestone"></button>
-          <div>
-            <div class="row-title">${escapeHTML(milestone.title)}</div>
-            <div class="row-meta">${escapeHTML(milestone.type || "custom")}${milestone.targetDate ? ` · ${formatDate(milestone.targetDate)}` : ""}</div>
-            ${milestone.note ? `<p class="row-note">${escapeHTML(milestone.note)}</p>` : ""}
-          </div>
+        <div class="row-main">
+          <div class="row-title">${escapeHTML(milestone.title)}</div>
+          <div class="row-meta">${escapeHTML(milestone.type || "custom")}${milestone.targetDate ? ` · target ${formatDate(milestone.targetDate)}` : ""}</div>
+          ${milestone.note ? `<p class="row-note">${escapeHTML(milestone.note)}</p>` : ""}
         </div>
+        <div class="row-actions">
+          <button class="mini-button" data-achieve-milestone="${milestone.id}">Mark achieved</button>
+          <button class="mini-button danger" data-delete-milestone="${milestone.id}">Delete</button>
+        </div>
+      </div>
+    </article>`).join("") : `<div class="empty-state compact-empty">Nothing in progress.</div>`;
+
+    const trophyHTML = achieved.length ? achieved.map(milestone => `<article class="trophy-card">
+      <div class="trophy-mark" aria-hidden="true">🏆</div>
+      <div class="trophy-title">${escapeHTML(milestone.title)}</div>
+      <div class="row-meta">${escapeHTML(milestone.type || "custom")}${milestone.achievedDate ? ` · ${formatDate(milestone.achievedDate)}` : ""}</div>
+      ${milestone.note ? `<p class="row-note">${escapeHTML(milestone.note)}</p>` : ""}
+      <div class="trophy-actions">
+        <button class="mini-button" data-reopen-milestone="${milestone.id}">Move back</button>
         <button class="mini-button danger" data-delete-milestone="${milestone.id}">Delete</button>
       </div>
-    </article>`).join("");
+    </article>`).join("") : `<div class="empty-state trophy-empty">Completed milestones will appear here.</div>`;
 
-    $$('[data-toggle-milestone]').forEach(button => button.addEventListener("click", () => {
-      const milestone = state.milestones.find(x => x.id === button.dataset.toggleMilestone);
-      if (milestone) { milestone.done = !milestone.done; saveState(); refresh(); }
+    target.innerHTML = `<div class="milestone-groups">
+      <div class="milestone-working">
+        <div class="subsection-heading"><h3>Working toward</h3><span class="muted">${working.length}</span></div>
+        <div class="milestone-list">${workingHTML}</div>
+      </div>
+      <div class="trophy-section">
+        <div class="subsection-heading"><h3>Trophy case</h3><span class="muted">${achieved.length}</span></div>
+        <div class="trophy-grid">${trophyHTML}</div>
+      </div>
+    </div>`;
+
+    $$('[data-achieve-milestone]').forEach(button => button.addEventListener("click", () => {
+      const milestone = state.milestones.find(x => x.id === button.dataset.achieveMilestone);
+      if (milestone) {
+        milestone.status = "achieved";
+        milestone.achievedDate = todayISO();
+        saveState(); refresh();
+      }
+    }));
+    $$('[data-reopen-milestone]').forEach(button => button.addEventListener("click", () => {
+      const milestone = state.milestones.find(x => x.id === button.dataset.reopenMilestone);
+      if (milestone) {
+        milestone.status = "working";
+        milestone.achievedDate = "";
+        saveState(); refresh();
+      }
     }));
     $$('[data-delete-milestone]').forEach(button => button.addEventListener("click", () => {
       state.milestones = state.milestones.filter(x => x.id !== button.dataset.deleteMilestone);
@@ -552,7 +594,7 @@ function initHobbyPage(config) {
           ${item.url ? `<div class="row-meta"><a href="${escapeHTML(item.url)}" target="_blank" rel="noreferrer">Open link ↗</a></div>` : ""}
         </div>
         <div class="row-actions">
-          <button class="mini-button" data-promote-curiosity="${item.id}">Move to learning</button>
+          <button class="mini-button" data-promote-curiosity="${item.id}">Move to items</button>
           <button class="mini-button danger" data-delete-curiosity="${item.id}">Delete</button>
         </div>
       </div>
@@ -562,8 +604,8 @@ function initHobbyPage(config) {
       const curiosity = state.curiosities.find(x => x.id === button.dataset.promoteCuriosity);
       if (!curiosity) return;
       state.items.unshift({
-        id: crypto.randomUUID(), hobbyId, title: curiosity.title, status: "planned", progress: 0,
-        notes: curiosity.note || "", nextAction: "", tags: ["from-curiosity"], archived: false
+        id: crypto.randomUUID(), hobbyId, kind: "learning", title: curiosity.title, status: "planned", progress: 0,
+        notes: curiosity.note || "", nextAction: "", tags: ["from-curiosity"], resources: [], archived: false
       });
       state.curiosities = state.curiosities.filter(x => x.id !== curiosity.id);
       saveState(); refresh();
@@ -582,7 +624,7 @@ function initHobbyPage(config) {
       return;
     }
     target.innerHTML = archived.map(item => `<article class="archive-row">
-      <div class="archive-top"><div><div class="row-title">${escapeHTML(item.title)}</div><div class="row-meta">${escapeHTML(item.status)}</div></div>
+      <div class="archive-top"><div><div class="row-title">${escapeHTML(item.title)}</div><div class="row-meta">${item.kind === "project" ? "Project" : "Learning"} · ${escapeHTML(item.status)}</div></div>
       <div class="row-actions"><button class="mini-button" data-restore-item="${item.id}">Restore</button><button class="mini-button danger" data-delete-item="${item.id}">Delete permanently</button></div></div>
     </article>`).join("");
 
@@ -608,15 +650,17 @@ function initHobbyPage(config) {
     editingItemId = item?.id || null;
     const form = $("#itemForm");
     form.reset();
-    $("#itemDialogTitle").textContent = item ? "Edit learning" : "Add learning";
+    $("#itemDialogTitle").textContent = item ? "Edit item" : "Add item";
     if (item) {
       form.elements.title.value = item.title || "";
+      form.elements.kind.value = item.kind || "learning";
       form.elements.status.value = item.status || "planned";
       form.elements.progress.value = Number(item.progress || 0);
       form.elements.tags.value = (item.tags || []).join(", ");
       form.elements.notes.value = item.notes || "";
       form.elements.nextAction.value = item.nextAction || "";
     } else {
+      form.elements.kind.value = "learning";
       form.elements.status.value = "planned";
       form.elements.progress.value = 0;
     }
@@ -632,35 +676,17 @@ function initHobbyPage(config) {
     $("#activityDialog").showModal();
   }
 
-  function openProject(project = null) {
-    editingProjectId = project?.id || null;
-    const form = $("#projectForm");
-    form.reset();
-    $("#projectDialogTitle").textContent = project ? "Edit project" : "Add project";
-    if (project) {
-      form.elements.title.value = project.title || "";
-      form.elements.status.value = project.status || "active";
-      form.elements.progress.value = Number(project.progress || 0);
-      form.elements.description.value = project.description || "";
-    } else {
-      form.elements.status.value = "active";
-      form.elements.progress.value = 0;
-    }
-    $("#projectDialog").showModal();
-  }
-
-  function openResource(projectId) {
+  function openResource(itemId) {
     const form = $("#resourceForm");
     form.reset();
-    form.elements.projectId.value = projectId;
+    form.elements.itemId.value = itemId;
     $("#resourceDialog").showModal();
   }
 
   function refresh() {
     renderSummary();
     renderActivity();
-    renderLearning();
-    renderProjects();
+    renderItems();
     renderMilestones();
     renderCuriosity();
     renderArchive();
@@ -678,12 +704,12 @@ function initHobbyPage(config) {
     }, 300);
   });
 
-  $("#learningSearch").addEventListener("input", renderLearning);
-  $("#learningStatus").addEventListener("change", renderLearning);
+  $("#itemSearch").addEventListener("input", renderItems);
+  $("#itemStatus").addEventListener("change", renderItems);
+  $("#itemKind").addEventListener("change", renderItems);
   $("#addItemButton").addEventListener("click", () => openItem());
   $("#addItemButton2").addEventListener("click", () => openItem());
   $("#logActivityButton").addEventListener("click", () => openActivity());
-  $("#addProjectButton").addEventListener("click", () => openProject());
   $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
   $("#addCuriosityButton").addEventListener("click", () => $("#curiosityDialog").showModal());
 
@@ -692,13 +718,14 @@ function initHobbyPage(config) {
   $("#itemForm").addEventListener("submit", event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const old = state.items.find(x => x.id === editingItemId);
     const entry = {
       id: editingItemId || crypto.randomUUID(), hobbyId,
-      title: String(data.get("title")).trim(), status: String(data.get("status")),
+      title: String(data.get("title")).trim(), kind: String(data.get("kind")), status: String(data.get("status")),
       progress: Math.min(100, Math.max(0, Number(data.get("progress")) || 0)),
       tags: String(data.get("tags") || "").split(",").map(x => x.trim()).filter(Boolean),
       notes: String(data.get("notes") || "").trim(), nextAction: String(data.get("nextAction") || "").trim(),
-      archived: editingItemId ? Boolean(state.items.find(x => x.id === editingItemId)?.archived) : false
+      resources: old?.resources || [], archived: old?.archived || false
     };
     state.items = editingItemId ? state.items.map(x => x.id === editingItemId ? entry : x) : [entry, ...state.items];
     saveState(); $("#itemDialog").close(); refresh();
@@ -714,41 +741,30 @@ function initHobbyPage(config) {
     saveState(); $("#activityDialog").close(); refresh();
   });
 
-  $("#projectForm").addEventListener("submit", event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const old = state.projects.find(x => x.id === editingProjectId);
-    const project = {
-      id: editingProjectId || crypto.randomUUID(), hobbyId,
-      title: String(data.get("title")).trim(), status: String(data.get("status")),
-      progress: Math.min(100, Math.max(0, Number(data.get("progress")) || 0)),
-      description: String(data.get("description") || "").trim(), resources: old?.resources || []
-    };
-    state.projects = editingProjectId ? state.projects.map(x => x.id === editingProjectId ? project : x) : [project, ...state.projects];
-    saveState(); $("#projectDialog").close(); refresh();
-  });
-
   $("#resourceForm").addEventListener("submit", event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const project = state.projects.find(x => x.id === data.get("projectId"));
-    if (project) {
-      project.resources = project.resources || [];
-      project.resources.push({
+    const item = state.items.find(x => x.id === data.get("itemId"));
+    if (item) {
+      item.resources = item.resources || [];
+      item.resources.push({
         id: crypto.randomUUID(), label: String(data.get("label")).trim(), type: String(data.get("type") || "").trim(),
         url: String(data.get("url")).trim(), note: String(data.get("note") || "").trim()
       });
       saveState();
     }
-    $("#resourceDialog").close(); renderProjects();
+    $("#resourceDialog").close(); renderItems();
   });
 
   $("#milestoneForm").addEventListener("submit", event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const status = String(data.get("status"));
+    const date = String(data.get("date") || "");
     state.milestones.unshift({
       id: crypto.randomUUID(), hobbyId, title: String(data.get("title")).trim(), type: String(data.get("type")),
-      targetDate: String(data.get("targetDate") || ""), note: String(data.get("note") || "").trim(), done: false
+      status, targetDate: status === "working" ? date : "", achievedDate: status === "achieved" ? (date || todayISO()) : "",
+      note: String(data.get("note") || "").trim()
     });
     saveState(); event.currentTarget.reset(); $("#milestoneDialog").close(); refresh();
   });
