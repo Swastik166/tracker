@@ -1,48 +1,56 @@
-# My Learning Atlas
+# My Hobbies
 
-A static personal hobby and learning dashboard for GitHub Pages.
+A quiet personal website for documenting hobbies, learning, projects, resources, milestones, activity, and ideas.
 
-## What it tracks
+## Structure
 
-- Learning topics: planned, learning, and learned
-- Next actions and progress
-- Practice/activity sessions with a heatmap and streak
-- Projects with a separate resource shelf for each project
-- Milestones: firsts, completions, personal bests, consistency goals, project markers, or custom milestones
-- Curiosity Inbox for interesting ideas that are not commitments yet
-- Archive for retired or paused learning entries
-- JSON backup/import
-- Dark mode
+```text
+index.html              Home / hobby index
+styles.css              Shared visual design
+app.js                   Shared behavior and local data storage
+hobbies.js               List of hobbies shown on the home page
+hobbies/
+  _template.html         Copy this when adding a hobby
+  coding.html
+  photography.html
+  guitar.html
+  cooking.html
+ADDING_A_HOBBY.md        Short instructions for adding another hobby
+```
 
-## Data storage in this version
+Each hobby is a real separate HTML page, but all hobby pages use the same layout and JavaScript. That means the page files themselves stay very small.
 
-This version still uses browser `localStorage`. The full application state is stored under one key (`learning-atlas-state-v2`) so it will be easier to replace the storage layer with a remote database/API later.
+## What each hobby page contains
 
-Entries remain on the same browser/device between visits, but they do not automatically sync between devices and are not written back to the GitHub repository.
+- Activity heatmap and recent practice log
+- Simple autosaving hobby notes
+- Planned / learning / learned list
+- Next action and progress for learning items
+- Projects
+- A separate resource shelf inside each project
+- Milestones
+- Curiosity inbox
+- Archive
 
-Use **Export data** periodically for a portable JSON backup.
+## Adding a hobby
 
-## Publish on GitHub Pages
+See `ADDING_A_HOBBY.md`. In short: copy `hobbies/_template.html`, edit three values, then add one entry to `hobbies.js`.
 
-1. Create a GitHub repository.
-2. Put `index.html`, `style.css`, and `app.js` at the repository root.
-3. Push to GitHub.
-4. Open **Settings → Pages**.
-5. Choose **Deploy from a branch**.
-6. Select `main` and `/ (root)`.
-7. Save.
+## Publish with GitHub Pages
 
-No build step is required.
+1. Put these files in the repository root.
+2. Open the repository on GitHub.
+3. Go to **Settings → Pages**.
+4. Under **Build and deployment**, choose **Deploy from a branch**.
+5. Select the main branch and `/ (root)`.
+6. Save.
 
-## Good future storage upgrades
+## Data storage
 
-When persistent cross-device editing is wanted, the front-end can keep almost the same data model and replace `loadState()` / `saveState()` with calls to a remote storage layer.
+The current version stores personal entries in browser `localStorage`. The data model is shared across all hobby pages and is stored under one key, so the home page can summarize activity from every hobby.
 
-Good options include:
+The site also imports the previous `learning-atlas-state-v2` data automatically the first time this version is opened in the same browser.
 
-- **Supabase** — best balance for login + database + simple JavaScript API.
-- **Firebase** — also suitable for authentication and synced data.
-- **GitHub API** — can write JSON/Markdown back into the repository, but requires authentication and is less pleasant for frequent edits.
-- **A tiny serverless API** — maximum control, more setup.
+Use **Export data** on the home page for backups.
 
-For a private personal dashboard, Supabase or Firebase is the straightforward next step if automatic syncing becomes important.
+A future database version can replace the storage functions without changing the page structure.
