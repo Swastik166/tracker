@@ -3,21 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="My Cooking hobby journal." />
-  <title>Cooking · My Hobbies</title>
+  <meta name="description" content="My hobby journal." />
+  <title>Reading · My Hobbies</title>
   <link rel="stylesheet" href="../styles.css" />
 </head>
 <body data-page="hobby">
   <div id="app" class="app-loading">Loading…</div>
-  <script>
-    window.HOBBY_PAGE = {
-      id: "cooking",
-      name: "Cooking",
-      description: "Recipes, techniques, experiments, and things worth repeating."
-    };
-  </script>
+
+  <!-- Change only this ID after copying the template. All hobby details live in ../hobbies.js. -->
+  <script>window.HOBBY_PAGE_ID = "reading";</script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../config.js"></script>
+  <script src="../hobbies.js"></script>
   <script src="../app.js"></script>
 </body>
 </html>

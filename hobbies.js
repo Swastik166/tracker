@@ -1,26 +1,26 @@
 window.HOBBIES = [
   {
-    id: "coding",
-    name: "Coding",
-    page: "hobbies/coding.html",
-    description: "Projects, concepts, and things I want to understand better."
+    id: "piano",
+    name: "Keyboard",
+    page: "hobbies/keyboard.html",
+    description: "Trying to learn classical and some modern songs along with theory."
   },
   {
-    id: "photography",
-    name: "Photography",
-    page: "hobbies/photography.html",
-    description: "Techniques, ideas, photo projects, and visual references."
+    id: "running",
+    name: "Running",
+    page: "hobbies/running.html",
+    description: "Logging excerices, techniques, times and goals."
   },
   {
-    id: "guitar",
-    name: "Guitar",
-    page: "hobbies/guitar.html",
-    description: "Songs, technique, theory, and practice notes."
+    id: "speedcubing",
+    name: "SpeedCubing",
+    page: "hobbies/speedcubing.html",
+    description: "Mostly time-pass."
   },
   {
-    id: "cooking",
-    name: "Cooking",
-    page: "hobbies/cooking.html",
-    description: "Recipes, techniques, experiments, and things worth repeating."
+    id: "reading",
+    name: "Reading",
+    page: "hobbies/reading.html",
+    description: "Reading records and maybe some thoughts."
   }
 ];

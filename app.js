@@ -18,6 +18,10 @@ function emptyState() {
   };
 }
 
+function isOwnerMode() {
+  return Boolean(currentUser);
+}
+
 function escapeHTML(value = "") {
   return String(value).replace(/[&<>"']/g, char => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
@@ -109,6 +113,21 @@ function createDatabaseClient() {
   });
 }
 
+function resolveHobbyPageConfig() {
+  if (window.HOBBY_PAGE) return window.HOBBY_PAGE;
+  const id = window.HOBBY_PAGE_ID;
+  const registry = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
+  return registry.find(hobby => hobby.id === id) || null;
+}
+
+function defaultItemVisibility() {
+  return window.SUPABASE_CONFIG?.defaultItemVisibility === "private" ? "private" : "public";
+}
+
+function defaultPublicHeatmap() {
+  return window.SUPABASE_CONFIG?.publicHeatmapByDefault !== false;
+}
+
 function initialTheme() {
   if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
     document.body.classList.add("dark");
@@ -149,9 +168,9 @@ function renderAuth(message = "") {
   $("#app").innerHTML = `
     <main class="auth-shell page-width">
       <section class="auth-panel">
-        <p class="eyebrow">MY HOBBIES</p>
+        <p class="eyebrow">OWNER ACCESS</p>
         <h1>Sign in</h1>
-        <p class="muted">My notes and progress are saved in the private database after I sign in.</p>
+        <p class="muted">Signing in unlocks private notes and editing. The public journal remains readable without an account.</p>
         <form id="authForm" class="auth-form">
           <label>Email<input name="email" type="email" autocomplete="email" required /></label>
           <label>Password<input name="password" type="password" autocomplete="current-password" minlength="6" required /></label>
@@ -161,6 +180,7 @@ function renderAuth(message = "") {
           </div>
         </form>
         <p id="authMessage" class="auth-message ${message ? "visible" : ""}">${escapeHTML(message)}</p>
+        <button class="text-button auth-back" id="backToPublicButton" type="button">← Back to public site</button>
         <p class="muted copy-small auth-help">${window.SUPABASE_CONFIG?.showCreateAccount !== false ? "The create-account button is only needed for the first account. After that, disable new signups in Supabase." : "Use the account already created for this journal."}</p>
       </section>
     </main>`;
@@ -201,6 +221,8 @@ function renderAuth(message = "") {
       setAuthMessage("Account created. Check your email and open the confirmation link, then return here and sign in.");
     }
   });
+
+  $("#backToPublicButton")?.addEventListener("click", enterPublicApp);
 }
 
 function setAuthMessage(message, isError = false) {
@@ -214,13 +236,13 @@ function setAuthMessage(message, isError = false) {
 async function signOut() {
   await db.auth.signOut();
   currentUser = null;
-  state = emptyState();
-  renderAuth("Signed out.");
+  await enterPublicApp();
 }
 
 function bindGlobalHeader() {
   bindThemeButton();
   $("#signOutButton")?.addEventListener("click", signOut);
+  $("#signInButton")?.addEventListener("click", () => renderAuth());
 }
 
 function mapItem(row) {
@@ -236,6 +258,7 @@ function mapItem(row) {
     nextAction: row.next_action || "",
     archived: Boolean(row.archived),
     isFocus: Boolean(row.is_focus),
+    visibility: row.visibility || "public",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     touchedAt: row.touched_at,
@@ -267,6 +290,7 @@ function mapMilestone(row) {
     achievedDate: row.achieved_date || "",
     note: row.note || "",
     imagePath: row.image_path || "",
+    visibility: row.visibility || "auto",
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -285,17 +309,27 @@ function mapCuriosity(row) {
 
 function mapActivity(row) {
   return {
-    id: row.id,
+    id: row.id || `${row.hobby_id}-${row.activity_date}-${row.minutes}-${Math.random()}`,
     hobbyId: row.hobby_id,
     itemId: row.item_id || "",
     date: row.activity_date,
     minutes: row.minutes,
     note: row.note || "",
-    createdAt: row.created_at
+    publicHeatmap: row.public_heatmap !== false,
+    createdAt: row.created_at || ""
   };
 }
 
-async function loadState() {
+function attachResources(items, resources) {
+  const resourceMap = new Map();
+  resources.forEach(resource => {
+    if (!resourceMap.has(resource.itemId)) resourceMap.set(resource.itemId, []);
+    resourceMap.get(resource.itemId).push(resource);
+  });
+  items.forEach(item => item.resources = resourceMap.get(item.id) || []);
+}
+
+async function loadOwnerState() {
   const [itemsResult, resourcesResult, milestonesResult, curiositiesResult, activityResult, notesResult] = await Promise.all([
     db.from("items").select("*").order("touched_at", { ascending: false }),
     db.from("resources").select("*").order("created_at", { ascending: true }),
@@ -310,12 +344,7 @@ async function loadState() {
 
   const items = itemsResult.data.map(mapItem);
   const resources = resourcesResult.data.map(mapResource);
-  const resourceMap = new Map();
-  resources.forEach(resource => {
-    if (!resourceMap.has(resource.itemId)) resourceMap.set(resource.itemId, []);
-    resourceMap.get(resource.itemId).push(resource);
-  });
-  items.forEach(item => item.resources = resourceMap.get(item.id) || []);
+  attachResources(items, resources);
 
   state = {
     items,
@@ -327,8 +356,34 @@ async function loadState() {
   };
 }
 
+async function loadPublicState() {
+  const [itemsResult, resourcesResult, milestonesResult, activityResult] = await Promise.all([
+    db.from("items").select("id,hobby_id,title,kind,status,progress,tags,notes,archived,visibility,created_at,updated_at,touched_at,completed_at").order("touched_at", { ascending: false }),
+    db.from("resources").select("id,item_id,label,type,url,note,created_at").order("created_at", { ascending: true }),
+    db.from("milestones").select("id,hobby_id,title,type,status,target_date,achieved_date,note,image_path,visibility,created_at,updated_at").order("created_at", { ascending: false }),
+    db.from("activity").select("hobby_id,activity_date,minutes").order("activity_date", { ascending: false })
+  ]);
+
+  const failure = [itemsResult, resourcesResult, milestonesResult, activityResult].find(x => x.error);
+  if (failure) throw failure.error;
+
+  const items = itemsResult.data.map(mapItem);
+  const resources = resourcesResult.data.map(mapResource);
+  attachResources(items, resources);
+
+  state = {
+    items,
+    resources,
+    milestones: milestonesResult.data.map(mapMilestone),
+    curiosities: [],
+    activity: activityResult.data.map(mapActivity),
+    hobbyNotes: {}
+  };
+}
+
 async function reloadState() {
-  await loadState();
+  if (isOwnerMode()) await loadOwnerState();
+  else await loadPublicState();
 }
 
 function showDataError(error) {
@@ -338,6 +393,7 @@ function showDataError(error) {
 }
 
 async function runWrite(operation) {
+  if (!currentUser) throw new Error("Sign in to make changes.");
   try {
     const result = await operation();
     if (result?.error) throw result.error;
@@ -366,18 +422,25 @@ function exportSnapshot() {
   URL.revokeObjectURL(url);
 }
 
+function headerActions() {
+  return `<div class="button-row">
+    <button class="quiet-button" id="themeToggle" type="button">Dark</button>
+    ${isOwnerMode()
+      ? `<button class="text-button" id="signOutButton" type="button">Sign out</button>`
+      : `<button class="text-button" id="signInButton" type="button">Sign in</button>`}
+  </div>`;
+}
+
 function renderHome() {
-  const registry = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
+  const allHobbies = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
+  const registry = allHobbies;
   document.title = "My Hobbies";
   $("#app").className = "";
   $("#app").innerHTML = `
     <header class="site-header">
       <div class="page-width header-inner">
         <a class="site-title" href="index.html">My Hobbies</a>
-        <div class="button-row">
-          <button class="quiet-button" id="themeToggle" type="button">Dark</button>
-          <button class="text-button" id="signOutButton" type="button">Sign out</button>
-        </div>
+        ${headerActions()}
       </div>
     </header>
 
@@ -406,22 +469,22 @@ function renderHome() {
         }).join("")}</div>
       </section>
 
-      <section class="home-grid">
+      <section class="home-grid ${isOwnerMode() ? "" : "public-home-grid"}">
         <div class="plain-panel">
           <div class="section-line">
-            <h2>Recent activity</h2>
+            <h2>Activity</h2>
             <span id="totalMinutes" class="muted"></span>
           </div>
           <div class="heatmap-wrap"><div id="homeHeatmap" class="heatmap" aria-label="Overall activity heatmap"></div></div>
-          <div id="recentActivity" class="simple-list"></div>
+          ${isOwnerMode() ? `<div id="recentActivity" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">The heatmap is public; activity notes remain private.</p>`}
         </div>
 
-        <div class="plain-panel database-panel">
+        ${isOwnerMode() ? `<div class="plain-panel database-panel">
           <h2>Saved</h2>
           <p class="muted copy-small">Changes are stored in Supabase and available on my other devices after I sign in.</p>
           <div class="database-status"><span class="status-dot"></span><span>${escapeHTML(currentUser.email || "Signed in")}</span></div>
           <button id="exportButton" class="quiet-button" type="button">Download snapshot</button>
-        </div>
+        </div>` : ""}
       </section>
     </main>
 
@@ -431,18 +494,20 @@ function renderHome() {
   buildHeatmap($("#homeHeatmap"), activity);
   $("#totalMinutes").textContent = `${minutesLabel(activity.reduce((sum, x) => sum + Number(x.minutes || 0), 0))} logged`;
 
-  const recent = activity.slice(0, 6);
-  const recentTarget = $("#recentActivity");
-  recentTarget.innerHTML = recent.length ? recent.map(entry => {
-    const hobby = registry.find(x => x.id === entry.hobbyId);
-    const item = state.items.find(x => x.id === entry.itemId);
-    return `<div class="simple-row">
-      <span>${escapeHTML(entry.note || item?.title || "Practice session")}</span>
-      <span class="muted">${escapeHTML(hobby?.name || entry.hobbyId)} · ${entry.minutes} min · ${formatDate(entry.date)}</span>
-    </div>`;
-  }).join("") : `<div class="empty-state">No activity logged yet.</div>`;
+  if (isOwnerMode()) {
+    const recent = activity.slice(0, 6);
+    const recentTarget = $("#recentActivity");
+    recentTarget.innerHTML = recent.length ? recent.map(entry => {
+      const hobby = allHobbies.find(x => x.id === entry.hobbyId);
+      const item = state.items.find(x => x.id === entry.itemId);
+      return `<div class="simple-row">
+        <span>${escapeHTML(entry.note || item?.title || "Practice session")}</span>
+        <span class="muted">${escapeHTML(hobby?.name || entry.hobbyId)} · ${entry.minutes} min · ${formatDate(entry.date)}</span>
+      </div>`;
+    }).join("") : `<div class="empty-state">No activity logged yet.</div>`;
+    $("#exportButton")?.addEventListener("click", exportSnapshot);
+  }
 
-  $("#exportButton").addEventListener("click", exportSnapshot);
   bindGlobalHeader();
 }
 
@@ -469,7 +534,9 @@ function dialogMarkup() {
       <label>Minutes<input name="minutes" type="number" min="1" max="1440" value="30" required /></label>
       <label class="full">Related item<select name="itemId" id="activityItemSelect"><option value="">General practice</option></select></label>
       <label class="full">Note<input name="note" placeholder="What I worked on" /></label>
+      <label class="full checkbox-label"><input name="publicHeatmap" type="checkbox" value="yes" /> Include date + minutes in the public heatmap</label>
     </div>
+    <p class="form-note">Public heatmap entries expose only the date and minutes, not this note or related item.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="activityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
@@ -482,6 +549,7 @@ function dialogMarkup() {
       <label class="full">URL<input name="url" type="url" required placeholder="https://…" /></label>
       <label class="full">Note<input name="note" placeholder="Why I saved this" /></label>
     </div>
+    <p class="form-note">Resources inherit the public/private setting of their project.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="resourceDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
@@ -495,7 +563,7 @@ function dialogMarkup() {
       <label class="full">Note<input name="note" placeholder="Optional context" /></label>
       <label class="full">Trophy image (optional)<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" /></label>
     </div>
-    <p class="form-note">Images are private in Supabase Storage and only appear in the trophy case.</p>
+    <p class="form-note">Milestones use automatic visibility by default: private while working toward them, public after achievement. You can override this later from the milestone row.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="milestoneDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
@@ -512,31 +580,32 @@ function dialogMarkup() {
     <div class="form-grid">
       <label class="full">What caught my attention?<input name="title" required /></label>
       <label class="full">Link<input name="url" type="url" placeholder="https://…" /></label>
-      <label class="full">Note<textarea name="note" placeholder="Why it seems interesting"></textarea></label>
+      <label class="full">Note<textarea name="note" placeholder="Why this looked interesting"></textarea></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="curiosityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>`;
 }
 
 function renderHobbyShell(config) {
+  const owner = isOwnerMode();
   document.title = `${config.name} · My Hobbies`;
   $("#app").className = "";
   $("#app").innerHTML = `
     <header class="site-header">
       <div class="page-width header-inner">
         <div class="breadcrumbs"><a href="../index.html">My Hobbies</a> / ${escapeHTML(config.name)}</div>
-        <div class="button-row"><button class="quiet-button" id="themeToggle" type="button">Dark</button><button class="text-button" id="signOutButton" type="button">Sign out</button></div>
+        ${headerActions()}
       </div>
     </header>
 
     <main class="page-width hobby-main">
       <section class="hobby-heading">
         <div><h1>${escapeHTML(config.name)}</h1><p>${escapeHTML(config.description || "")}</p></div>
-        <div class="button-row"><button id="logActivityButton" class="quiet-button" type="button">Log activity</button><button id="addItemButton" class="primary-button" type="button">Add item</button></div>
+        ${owner ? `<div class="button-row"><button id="logActivityButton" class="quiet-button" type="button">Log activity</button><button id="addItemButton" class="primary-button" type="button">Add item</button></div>` : ""}
       </section>
 
       <nav class="hobby-nav" aria-label="Page sections">
-        <a href="#focus">Focus</a><a href="#overview">Overview</a><a href="#work">Items</a><a href="#milestones">Milestones</a><a href="#curiosity">Curiosity</a><a href="#history">History</a><a href="#archive">Archive</a>
+        ${owner ? `<a href="#focus">Focus</a>` : ""}<a href="#overview">Activity</a><a href="#work">Items</a><a href="#milestones">Milestones</a>${owner ? `<a href="#curiosity">Curiosity</a>` : ""}<a href="#history">History</a>${owner ? `<a href="#archive">Archive</a>` : ""}
       </nav>
 
       <section class="summary-row" aria-label="Hobby summary">
@@ -546,29 +615,29 @@ function renderHobbyShell(config) {
         <div class="summary-item"><span>Time logged</span><strong id="summaryTime">0m</strong></div>
       </section>
 
-      <section id="focus" class="section-block focus-section">
+      ${owner ? `<section id="focus" class="section-block focus-section">
         <div class="section-heading"><div><h2>Current focus</h2><p>One or two things I want to keep visible right now.</p></div></div>
         <div id="focusList" class="focus-list"></div>
-      </section>
+      </section>` : ""}
 
-      <section id="overview" class="section-block overview-grid">
+      <section id="overview" class="section-block ${owner ? "overview-grid" : ""}">
         <div>
-          <div class="section-heading"><div><h2>Activity</h2><p>Recent practice over time.</p></div></div>
+          <div class="section-heading"><div><h2>Activity</h2><p>Practice over time.</p></div></div>
           <div class="heatmap-wrap"><div id="hobbyHeatmap" class="heatmap"></div></div>
           <div id="activityCaption" class="heatmap-caption"></div>
-          <div id="activityList" class="simple-list"></div>
+          ${owner ? `<div id="activityList" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">Only dates and minutes included in the public heatmap are shown here.</p>`}
         </div>
-        <div class="notes-box">
-          <div class="section-heading"><div><h2>Notes</h2><p>A simple scratchpad for this hobby.</p></div></div>
+        ${owner ? `<div class="notes-box">
+          <div class="section-heading"><div><h2>Notes</h2><p>A private scratchpad for this hobby.</p></div></div>
           <textarea id="hobbyNotes" placeholder="Notes, ideas, reminders…"></textarea>
           <div id="notesSaved" class="autosave-note">Saved to Supabase.</div>
-        </div>
+        </div>` : ""}
       </section>
 
       <section id="work" class="section-block">
         <div class="section-heading">
           <div><h2>Learning & projects</h2><p>Everything I’m working on in one place. The type is just a tag.</p></div>
-          <button id="addItemButton2" class="quiet-button" type="button">Add item</button>
+          ${owner ? `<button id="addItemButton2" class="quiet-button" type="button">Add item</button>` : ""}
         </div>
         <div class="toolbar toolbar-three">
           <input id="itemSearch" type="search" placeholder="Search items…" />
@@ -579,28 +648,28 @@ function renderHobbyShell(config) {
       </section>
 
       <section id="milestones" class="section-block">
-        <div class="section-heading"><div><h2>Milestones</h2><p>What I’m working toward, and a trophy case for what I’ve achieved.</p></div><button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button></div>
+        <div class="section-heading"><div><h2>Milestones</h2><p>${owner ? "What I’m working toward, and a trophy case for what I’ve achieved." : "Milestones and achievements I’ve chosen to share."}</p></div>${owner ? `<button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>` : ""}</div>
         <div id="milestoneList"></div>
       </section>
 
-      <section id="curiosity" class="section-block">
+      ${owner ? `<section id="curiosity" class="section-block">
         <div class="section-heading"><div><h2>Curiosity inbox</h2><p>Interesting things I may want to explore later, without turning them into commitments yet.</p></div><button id="addCuriosityButton" class="quiet-button" type="button">Add curiosity</button></div>
         <div id="curiosityList" class="curiosity-list"></div>
-      </section>
+      </section>` : ""}
 
       <section id="history" class="section-block">
-        <div class="section-heading"><div><h2>History</h2><p>An automatic month-by-month record from things I already log.</p></div></div>
+        <div class="section-heading"><div><h2>History</h2><p>An automatic month-by-month record from things already logged.</p></div></div>
         <div id="historyList" class="history-list"></div>
       </section>
 
-      <section id="archive" class="section-block">
+      ${owner ? `<section id="archive" class="section-block">
         <div class="section-heading"><div><h2>Archived items</h2><p>Things I want to keep in the record without keeping them in the main list.</p></div></div>
         <div id="archiveList" class="archive-list"></div>
-      </section>
+      </section>` : ""}
     </main>
 
     <footer class="page-width footer"><span>${escapeHTML(config.name)} · My Hobbies</span></footer>
-    ${dialogMarkup()}`;
+    ${owner ? dialogMarkup() : ""}`;
 }
 
 function itemStatusLabel(status) {
@@ -609,6 +678,23 @@ function itemStatusLabel(status) {
 
 function itemKindLabel(kind) {
   return kind === "project" ? "Project" : "Learning";
+}
+
+function itemVisibilityControl(item) {
+  if (!isOwnerMode()) return "";
+  return `<select class="visibility-select" data-item-visibility="${item.id}" aria-label="Visibility for ${escapeHTML(item.title)}">
+    <option value="public" ${item.visibility === "public" ? "selected" : ""}>Public</option>
+    <option value="private" ${item.visibility === "private" ? "selected" : ""}>Private</option>
+  </select>`;
+}
+
+function milestoneVisibilityControl(milestone) {
+  if (!isOwnerMode()) return "";
+  return `<select class="visibility-select" data-milestone-visibility="${milestone.id}" aria-label="Visibility for ${escapeHTML(milestone.title)}" title="Auto = private while working, public when achieved">
+    <option value="auto" ${milestone.visibility === "auto" ? "selected" : ""}>Auto</option>
+    <option value="public" ${milestone.visibility === "public" ? "selected" : ""}>Public</option>
+    <option value="private" ${milestone.visibility === "private" ? "selected" : ""}>Private</option>
+  </select>`;
 }
 
 async function getSignedImageUrl(path) {
@@ -633,16 +719,21 @@ async function uploadMilestoneImage(file, hobbyId) {
 }
 
 async function deleteMilestoneImage(path) {
-  if (!path) return;
+  if (!path || !currentUser) return;
   signedImageCache.delete(path);
   const { error } = await db.storage.from("milestone-images").remove([path]);
   if (error) console.warn("Could not remove old trophy image", error);
 }
 
 function initHobbyPage(config) {
+  if (!config) {
+    $("#app").innerHTML = `<main class="page-width auth-shell"><section class="auth-panel"><h1>Hobby not found</h1><p class="muted">Check the hobby ID in this page and in hobbies.js.</p></section></main>`;
+    return;
+  }
   renderHobbyShell(config);
   bindGlobalHeader();
 
+  const owner = isOwnerMode();
   const hobbyId = config.id;
   const hobbyItems = () => state.items.filter(x => x.hobbyId === hobbyId);
   const visibleItems = () => hobbyItems().filter(x => !x.archived);
@@ -660,6 +751,7 @@ function initHobbyPage(config) {
   }
 
   function renderFocus() {
+    if (!owner) return;
     const focus = visibleItems().filter(x => x.isFocus).slice(0, 2);
     const target = $("#focusList");
     if (!focus.length) {
@@ -667,20 +759,22 @@ function initHobbyPage(config) {
       return;
     }
     target.innerHTML = focus.map(item => `<article class="focus-card">
-      <div class="row-labels"><span class="type-tag">${itemKindLabel(item.kind)}</span><span class="status">${itemStatusLabel(item.status)}</span></div>
+      <div class="row-labels"><span class="type-tag">${itemKindLabel(item.kind)}</span><span class="status">${itemStatusLabel(item.status)}</span>${itemVisibilityControl(item)}</div>
       <div class="focus-title">${escapeHTML(item.title)}</div>
       ${item.nextAction ? `<div class="focus-next">Next: ${escapeHTML(item.nextAction)}</div>` : ""}
       <div class="row-meta">Last touched ${formatDate(item.touchedAt)}</div>
       <div class="focus-actions"><button class="mini-button" data-log-item="${item.id}">Log activity</button><button class="text-button" data-focus-item="${item.id}">Unpin</button></div>
     </article>`).join("");
     bindItemActionButtons();
+    bindItemVisibilityControls();
   }
 
   function renderActivity() {
     const entries = hobbyActivity().sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
     buildHeatmap($("#hobbyHeatmap"), entries);
     const minutes = entries.reduce((sum, x) => sum + Number(x.minutes || 0), 0);
-    $("#activityCaption").textContent = entries.length ? `${entries.length} sessions · ${minutesLabel(minutes)} logged` : "No activity logged yet.";
+    $("#activityCaption").textContent = entries.length ? `${entries.length} ${entries.length === 1 ? "entry" : "entries"} · ${minutesLabel(minutes)} logged` : "No activity logged yet.";
+    if (!owner) return;
     const target = $("#activityList");
     target.innerHTML = entries.slice(0, 5).map(entry => {
       const item = state.items.find(x => x.id === entry.itemId);
@@ -692,13 +786,13 @@ function initHobbyPage(config) {
     const query = $("#itemSearch").value.trim().toLowerCase();
     const status = $("#itemStatus").value;
     const kind = $("#itemKind").value;
-    const haystack = [item.title, item.notes, item.nextAction, ...(item.tags || [])].join(" ").toLowerCase();
+    const haystack = [item.title, item.notes, owner ? item.nextAction : "", ...(item.tags || [])].join(" ").toLowerCase();
     return (!query || haystack.includes(query)) && (status === "all" || item.status === status) && (kind === "all" || item.kind === kind);
   }
 
   function renderItems() {
     const items = visibleItems().filter(itemMatchesFilters).sort((a, b) => {
-      if (a.isFocus !== b.isFocus) return a.isFocus ? -1 : 1;
+      if (owner && a.isFocus !== b.isFocus) return a.isFocus ? -1 : 1;
       return String(b.touchedAt).localeCompare(String(a.touchedAt));
     });
     const target = $("#itemList");
@@ -712,29 +806,31 @@ function initHobbyPage(config) {
       return `<article class="item-row">
         <div class="item-top">
           <div class="row-main">
-            <div class="row-labels">${item.isFocus ? `<span class="focus-badge">Focus</span>` : ""}<span class="type-tag">${itemKindLabel(item.kind)}</span><span class="status">${itemStatusLabel(item.status)}</span></div>
+            <div class="row-labels">${owner && item.isFocus ? `<span class="focus-badge">Focus</span>` : ""}<span class="type-tag">${itemKindLabel(item.kind)}</span><span class="status">${itemStatusLabel(item.status)}</span>${itemVisibilityControl(item)}</div>
             <div class="row-title item-title">${escapeHTML(item.title)}</div>
             <div class="row-meta">Last touched ${formatDate(item.touchedAt)}${item.tags.length ? ` · ${item.tags.map(tag => escapeHTML(tag)).join(" · ")}` : ""}</div>
             ${item.notes ? `<p class="row-note">${escapeHTML(item.notes)}</p>` : ""}
-            ${item.nextAction ? `<p class="row-next"><strong>Next:</strong> ${escapeHTML(item.nextAction)}</p>` : ""}
+            ${owner && item.nextAction ? `<p class="row-next"><strong>Next:</strong> ${escapeHTML(item.nextAction)}</p>` : ""}
             ${Number(item.progress) > 0 ? `<div class="progress-line" title="${item.progress}%"><span style="width:${item.progress}%"></span></div>` : ""}
           </div>
-          <div class="row-actions">
+          ${owner ? `<div class="row-actions">
             <button class="mini-button" data-log-item="${item.id}">Log</button>
             <button class="mini-button" data-focus-item="${item.id}">${item.isFocus ? "Unpin" : "Pin"}</button>
             ${item.kind === "project" ? `<button class="mini-button" data-add-resource="${item.id}">Resource</button>` : ""}
             <button class="mini-button" data-edit-item="${item.id}">Edit</button>
             <button class="text-button" data-archive-item="${item.id}">Archive</button>
-          </div>
+          </div>` : ""}
         </div>
         ${item.kind === "project" ? `<div class="resource-shelf">
           <div class="resource-heading"><h4>Resources</h4></div>
-          ${resources.length ? resources.map(resource => `<div class="resource-row"><div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div><button class="text-button" data-delete-resource="${resource.id}">Remove</button></div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
+          ${resources.length ? resources.map(resource => `<div class="resource-row"><div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<button class="text-button" data-delete-resource="${resource.id}">Remove</button>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
         </div>` : ""}
       </article>`;
     }).join("");
 
+    if (!owner) return;
     bindItemActionButtons();
+    bindItemVisibilityControls();
     $$('[data-edit-item]').forEach(button => button.addEventListener("click", () => openItem(state.items.find(x => x.id === button.dataset.editItem))));
     $$('[data-add-resource]').forEach(button => button.addEventListener("click", () => openResource(button.dataset.addResource)));
     $$('[data-archive-item]').forEach(button => button.addEventListener("click", async () => {
@@ -749,7 +845,20 @@ function initHobbyPage(config) {
     }));
   }
 
+  function bindItemVisibilityControls() {
+    if (!owner) return;
+    $$('[data-item-visibility]').forEach(select => {
+      if (select.dataset.bound) return;
+      select.dataset.bound = "1";
+      select.addEventListener("change", async () => {
+        await runWrite(() => db.from("items").update({ visibility: select.value }).eq("id", select.dataset.itemVisibility));
+        await reloadState(); refresh();
+      });
+    });
+  }
+
   function bindItemActionButtons() {
+    if (!owner) return;
     $$('[data-log-item]').forEach(button => {
       if (button.dataset.bound) return;
       button.dataset.bound = "1";
@@ -778,43 +887,50 @@ function initHobbyPage(config) {
     const achieved = milestones.filter(x => x.status === "achieved").sort((a, b) => String(b.achievedDate).localeCompare(String(a.achievedDate)));
     const target = $("#milestoneList");
     target.innerHTML = `<div class="milestone-groups">
-      <div>
+      ${working.length || owner ? `<div>
         <div class="subsection-heading"><h3>Working toward</h3><span class="muted">${working.length}</span></div>
-        <div class="milestone-list">${working.length ? working.map(m => `<article class="milestone-row"><div class="milestone-top"><div class="row-main"><div class="row-title">${escapeHTML(m.title)}</div><div class="row-meta">${escapeHTML(m.type)}${m.targetDate ? ` · target ${formatDate(m.targetDate)}` : ""}</div>${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}</div><div class="row-actions"><button class="mini-button" data-achieve-milestone="${m.id}">Mark achieved</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div></div></article>`).join("") : `<div class="empty-state compact-empty">No milestones in progress.</div>`}</div>
-      </div>
+        <div class="milestone-list">${working.length ? working.map(m => `<article class="milestone-row"><div class="milestone-top"><div class="row-main"><div class="row-labels">${milestoneVisibilityControl(m)}</div><div class="row-title">${escapeHTML(m.title)}</div><div class="row-meta">${escapeHTML(m.type)}${m.targetDate ? ` · target ${formatDate(m.targetDate)}` : ""}</div>${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}</div>${owner ? `<div class="row-actions"><button class="mini-button" data-achieve-milestone="${m.id}">Mark achieved</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}</div></article>`).join("") : `<div class="empty-state compact-empty">No milestones in progress.</div>`}</div>
+      </div>` : ""}
       <div class="trophy-section">
         <div class="subsection-heading"><h3>Trophy case</h3><span class="muted">${achieved.length}</span></div>
         <div class="trophy-grid">${achieved.length ? achieved.map(m => `<article class="trophy-card">
           ${m.imagePath ? `<div class="trophy-image-wrap"><div class="trophy-image-placeholder" data-trophy-image="${escapeHTML(m.imagePath)}"></div></div>` : `<div class="trophy-mark">◇</div>`}
+          ${owner ? `<div class="row-labels trophy-visibility">${milestoneVisibilityControl(m)}</div>` : ""}
           <div class="trophy-title">${escapeHTML(m.title)}</div>
           <div class="row-meta">${formatDate(m.achievedDate)} · ${escapeHTML(m.type)}</div>
           ${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}
-          <div class="trophy-actions"><button class="mini-button" data-trophy-image-button="${m.id}">${m.imagePath ? "Replace image" : "Add image"}</button><button class="text-button" data-reopen-milestone="${m.id}">Move back</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>
-        </article>`).join("") : `<div class="empty-state trophy-empty">Nothing here yet. Achieved milestones will collect here over time.</div>`}</div>
+          ${owner ? `<div class="trophy-actions"><button class="mini-button" data-trophy-image-button="${m.id}">${m.imagePath ? "Replace image" : "Add image"}</button><button class="text-button" data-reopen-milestone="${m.id}">Move back</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}
+        </article>`).join("") : `<div class="empty-state trophy-empty">Nothing here yet.</div>`}</div>
       </div>
     </div>`;
 
-    $$('[data-achieve-milestone]').forEach(button => button.addEventListener("click", async () => {
-      await runWrite(() => db.from("milestones").update({ status: "achieved", achieved_date: todayISO() }).eq("id", button.dataset.achieveMilestone));
-      await reloadState(); refresh();
-    }));
-    $$('[data-reopen-milestone]').forEach(button => button.addEventListener("click", async () => {
-      await runWrite(() => db.from("milestones").update({ status: "working", achieved_date: null }).eq("id", button.dataset.reopenMilestone));
-      await reloadState(); refresh();
-    }));
-    $$('[data-delete-milestone]').forEach(button => button.addEventListener("click", async () => {
-      const milestone = state.milestones.find(x => x.id === button.dataset.deleteMilestone);
-      if (!confirm("Delete this milestone?")) return;
-      if (milestone?.imagePath) await deleteMilestoneImage(milestone.imagePath);
-      await runWrite(() => db.from("milestones").delete().eq("id", button.dataset.deleteMilestone));
-      await reloadState(); refresh();
-    }));
-    $$('[data-trophy-image-button]').forEach(button => button.addEventListener("click", () => {
-      const form = $("#trophyImageForm");
-      form.reset();
-      form.elements.milestoneId.value = button.dataset.trophyImageButton;
-      $("#trophyImageDialog").showModal();
-    }));
+    if (owner) {
+      $$('[data-milestone-visibility]').forEach(select => select.addEventListener("change", async () => {
+        await runWrite(() => db.from("milestones").update({ visibility: select.value }).eq("id", select.dataset.milestoneVisibility));
+        await reloadState(); refresh();
+      }));
+      $$('[data-achieve-milestone]').forEach(button => button.addEventListener("click", async () => {
+        await runWrite(() => db.from("milestones").update({ status: "achieved", achieved_date: todayISO() }).eq("id", button.dataset.achieveMilestone));
+        await reloadState(); refresh();
+      }));
+      $$('[data-reopen-milestone]').forEach(button => button.addEventListener("click", async () => {
+        await runWrite(() => db.from("milestones").update({ status: "working", achieved_date: null }).eq("id", button.dataset.reopenMilestone));
+        await reloadState(); refresh();
+      }));
+      $$('[data-delete-milestone]').forEach(button => button.addEventListener("click", async () => {
+        const milestone = state.milestones.find(x => x.id === button.dataset.deleteMilestone);
+        if (!confirm("Delete this milestone?")) return;
+        if (milestone?.imagePath) await deleteMilestoneImage(milestone.imagePath);
+        await runWrite(() => db.from("milestones").delete().eq("id", button.dataset.deleteMilestone));
+        await reloadState(); refresh();
+      }));
+      $$('[data-trophy-image-button]').forEach(button => button.addEventListener("click", () => {
+        const form = $("#trophyImageForm");
+        form.reset();
+        form.elements.milestoneId.value = button.dataset.trophyImageButton;
+        $("#trophyImageDialog").showModal();
+      }));
+    }
 
     for (const placeholder of $$('[data-trophy-image]')) {
       const url = await getSignedImageUrl(placeholder.dataset.trophyImage);
@@ -823,6 +939,7 @@ function initHobbyPage(config) {
   }
 
   function renderCuriosity() {
+    if (!owner) return;
     const curiosities = hobbyCuriosities();
     const target = $("#curiosityList");
     if (!curiosities.length) {
@@ -842,7 +959,8 @@ function initHobbyPage(config) {
         progress: 0,
         notes: curiosity.note || "",
         next_action: "",
-        tags: ["from-curiosity"]
+        tags: ["from-curiosity"],
+        visibility: defaultItemVisibility()
       }));
       await runWrite(() => db.from("curiosities").delete().eq("id", curiosity.id));
       await reloadState(); refresh();
@@ -857,33 +975,32 @@ function initHobbyPage(config) {
     const events = [];
     hobbyItems().filter(item => item.completedAt).forEach(item => events.push({
       date: item.completedAt.slice(0, 10),
-      type: "completed",
       title: `Completed ${itemKindLabel(item.kind).toLowerCase()}: ${item.title}`,
-      detail: item.nextAction ? "" : ""
+      detail: ""
     }));
     hobbyMilestones().filter(m => m.status === "achieved" && m.achievedDate).forEach(m => events.push({
       date: m.achievedDate,
-      type: "milestone",
       title: `Milestone: ${m.title}`,
       detail: m.note || ""
     }));
 
-    const projectMonthMap = new Map();
-    hobbyActivity().forEach(entry => {
-      const item = state.items.find(x => x.id === entry.itemId && x.kind === "project");
-      if (!item) return;
-      const key = `${entry.date.slice(0, 7)}|${item.id}`;
-      const existing = projectMonthMap.get(key) || { date: entry.date, item, minutes: 0 };
-      existing.minutes += Number(entry.minutes || 0);
-      if (entry.date > existing.date) existing.date = entry.date;
-      projectMonthMap.set(key, existing);
-    });
-    projectMonthMap.forEach(value => events.push({
-      date: value.date,
-      type: "worked",
-      title: `Worked on: ${value.item.title}`,
-      detail: minutesLabel(value.minutes)
-    }));
+    if (owner) {
+      const projectMonthMap = new Map();
+      hobbyActivity().forEach(entry => {
+        const item = state.items.find(x => x.id === entry.itemId && x.kind === "project");
+        if (!item) return;
+        const key = `${entry.date.slice(0, 7)}|${item.id}`;
+        const existing = projectMonthMap.get(key) || { date: entry.date, item, minutes: 0 };
+        existing.minutes += Number(entry.minutes || 0);
+        if (entry.date > existing.date) existing.date = entry.date;
+        projectMonthMap.set(key, existing);
+      });
+      projectMonthMap.forEach(value => events.push({
+        date: value.date,
+        title: `Worked on: ${value.item.title}`,
+        detail: minutesLabel(value.minutes)
+      }));
+    }
 
     return events.sort((a, b) => b.date.localeCompare(a.date));
   }
@@ -892,7 +1009,7 @@ function initHobbyPage(config) {
     const events = buildHistoryEvents();
     const target = $("#historyList");
     if (!events.length) {
-      target.innerHTML = `<div class="empty-state">History will build itself from completed items, milestones, and project activity.</div>`;
+      target.innerHTML = `<div class="empty-state">History will build itself from completed items and milestones${owner ? ", plus project activity" : ""}.</div>`;
       return;
     }
     const years = new Map();
@@ -912,6 +1029,7 @@ function initHobbyPage(config) {
   }
 
   function renderArchive() {
+    if (!owner) return;
     const archived = hobbyItems().filter(x => x.archived);
     const target = $("#archiveList");
     if (!archived.length) {
@@ -938,8 +1056,8 @@ function initHobbyPage(config) {
   }
 
   function openItem(item = null) {
-    editingItemId = item?.id || null;
     const form = $("#itemForm");
+    editingItemId = item?.id || null;
     form.reset();
     $("#itemDialogTitle").textContent = item ? "Edit item" : "Add item";
     if (item) {
@@ -963,6 +1081,7 @@ function initHobbyPage(config) {
     form.reset();
     form.elements.date.value = todayISO();
     form.elements.minutes.value = 30;
+    form.elements.publicHeatmap.checked = defaultPublicHeatmap();
     renderActivitySelect(itemId);
     $("#activityDialog").showModal();
   }
@@ -985,173 +1104,184 @@ function initHobbyPage(config) {
     renderArchive();
   }
 
-  $("#hobbyNotes").value = state.hobbyNotes[hobbyId] || "";
-  let noteTimer;
-  $("#hobbyNotes").addEventListener("input", event => {
-    clearTimeout(noteTimer);
-    $("#notesSaved").textContent = "Saving…";
-    const content = event.target.value;
-    noteTimer = setTimeout(async () => {
-      const { error } = await db.from("hobby_notes").upsert({
-        user_id: currentUser.id,
-        hobby_id: hobbyId,
-        content,
-        updated_at: new Date().toISOString()
-      }, { onConflict: "user_id,hobby_id" });
-      if (error) {
-        $("#notesSaved").textContent = "Could not save.";
-        console.error(error);
-      } else {
-        state.hobbyNotes[hobbyId] = content;
-        $("#notesSaved").textContent = "Saved to Supabase.";
-      }
-    }, 700);
-  });
-
   $("#itemSearch").addEventListener("input", renderItems);
   $("#itemStatus").addEventListener("change", renderItems);
   $("#itemKind").addEventListener("change", renderItems);
-  $("#addItemButton").addEventListener("click", () => openItem());
-  $("#addItemButton2").addEventListener("click", () => openItem());
-  $("#logActivityButton").addEventListener("click", () => openActivity());
-  $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
-  $("#addCuriosityButton").addEventListener("click", () => $("#curiosityDialog").showModal());
-  $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
 
-  $("#itemForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const old = state.items.find(x => x.id === editingItemId);
-    const status = String(data.get("status"));
-    const now = new Date().toISOString();
-    const payload = {
-      hobby_id: hobbyId,
-      title: String(data.get("title")).trim(),
-      kind: String(data.get("kind")),
-      status,
-      progress: Math.min(100, Math.max(0, Number(data.get("progress")) || 0)),
-      tags: String(data.get("tags") || "").split(",").map(x => x.trim()).filter(Boolean),
-      notes: String(data.get("notes") || "").trim(),
-      next_action: String(data.get("nextAction") || "").trim(),
-      touched_at: now,
-      completed_at: status === "done" ? (old?.completedAt || now) : null,
-      is_focus: status === "done" ? false : Boolean(old?.isFocus)
-    };
-    if (editingItemId) {
-      await runWrite(() => db.from("items").update(payload).eq("id", editingItemId));
-    } else {
-      await runWrite(() => db.from("items").insert(payload));
-    }
-    await reloadState();
-    $("#itemDialog").close();
-    refresh();
-  });
+  if (owner) {
+    $("#hobbyNotes").value = state.hobbyNotes[hobbyId] || "";
+    let noteTimer;
+    $("#hobbyNotes").addEventListener("input", event => {
+      clearTimeout(noteTimer);
+      $("#notesSaved").textContent = "Saving…";
+      const content = event.target.value;
+      noteTimer = setTimeout(async () => {
+        const { error } = await db.from("hobby_notes").upsert({
+          user_id: currentUser.id,
+          hobby_id: hobbyId,
+          content,
+          updated_at: new Date().toISOString()
+        }, { onConflict: "user_id,hobby_id" });
+        if (error) {
+          $("#notesSaved").textContent = "Could not save.";
+          console.error(error);
+        } else {
+          state.hobbyNotes[hobbyId] = content;
+          $("#notesSaved").textContent = "Saved to Supabase.";
+        }
+      }, 700);
+    });
 
-  $("#activityForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const itemId = String(data.get("itemId") || "") || null;
-    await runWrite(() => db.from("activity").insert({
-      hobby_id: hobbyId,
-      activity_date: String(data.get("date")),
-      minutes: Number(data.get("minutes")) || 0,
-      item_id: itemId,
-      note: String(data.get("note") || "").trim()
-    }));
-    if (itemId) {
-      await runWrite(() => db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId));
-    }
-    await reloadState();
-    $("#activityDialog").close();
-    refresh();
-  });
+    $("#addItemButton").addEventListener("click", () => openItem());
+    $("#addItemButton2").addEventListener("click", () => openItem());
+    $("#logActivityButton").addEventListener("click", () => openActivity());
+    $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
+    $("#addCuriosityButton").addEventListener("click", () => $("#curiosityDialog").showModal());
+    $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
 
-  $("#resourceForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const itemId = String(data.get("itemId"));
-    await runWrite(() => db.from("resources").insert({
-      item_id: itemId,
-      label: String(data.get("label")).trim(),
-      type: String(data.get("type") || "").trim(),
-      url: String(data.get("url")).trim(),
-      note: String(data.get("note") || "").trim()
-    }));
-    await db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId);
-    await reloadState();
-    $("#resourceDialog").close();
-    refresh();
-  });
-
-  $("#milestoneForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const status = String(data.get("status"));
-    const date = String(data.get("date") || "");
-    const file = data.get("image");
-    let imagePath = "";
-    try {
-      if (file instanceof File && file.size) imagePath = await uploadMilestoneImage(file, hobbyId);
-      const result = await db.from("milestones").insert({
+    $("#itemForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const old = state.items.find(x => x.id === editingItemId);
+      const status = String(data.get("status"));
+      const now = new Date().toISOString();
+      const payload = {
         hobby_id: hobbyId,
         title: String(data.get("title")).trim(),
-        type: String(data.get("type")),
+        kind: String(data.get("kind")),
         status,
-        target_date: status === "working" && date ? date : null,
-        achieved_date: status === "achieved" ? (date || todayISO()) : null,
+        progress: Math.min(100, Math.max(0, Number(data.get("progress")) || 0)),
+        tags: String(data.get("tags") || "").split(",").map(x => x.trim()).filter(Boolean),
+        notes: String(data.get("notes") || "").trim(),
+        next_action: String(data.get("nextAction") || "").trim(),
+        touched_at: now,
+        completed_at: status === "done" ? (old?.completedAt || now) : null,
+        is_focus: status === "done" ? false : Boolean(old?.isFocus),
+        visibility: old?.visibility || defaultItemVisibility()
+      };
+      if (editingItemId) {
+        await runWrite(() => db.from("items").update(payload).eq("id", editingItemId));
+      } else {
+        await runWrite(() => db.from("items").insert(payload));
+      }
+      await reloadState();
+      $("#itemDialog").close();
+      refresh();
+    });
+
+    $("#activityForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const itemId = String(data.get("itemId") || "") || null;
+      await runWrite(() => db.from("activity").insert({
+        hobby_id: hobbyId,
+        activity_date: String(data.get("date")),
+        minutes: Number(data.get("minutes")) || 0,
+        item_id: itemId,
         note: String(data.get("note") || "").trim(),
-        image_path: imagePath || null
-      });
-      if (result.error) throw result.error;
-    } catch (error) {
-      if (imagePath) await deleteMilestoneImage(imagePath);
-      showDataError(error);
-      return;
-    }
-    await reloadState();
-    event.currentTarget.reset();
-    $("#milestoneDialog").close();
-    refresh();
-  });
+        public_heatmap: data.get("publicHeatmap") === "yes"
+      }));
+      if (itemId) {
+        await runWrite(() => db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId));
+      }
+      await reloadState();
+      $("#activityDialog").close();
+      refresh();
+    });
 
-  $("#trophyImageForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const milestone = state.milestones.find(x => x.id === String(data.get("milestoneId")));
-    const file = data.get("image");
-    if (!milestone || !(file instanceof File) || !file.size) return;
-    let newPath = "";
-    try {
-      newPath = await uploadMilestoneImage(file, hobbyId);
-      const { error } = await db.from("milestones").update({ image_path: newPath }).eq("id", milestone.id);
-      if (error) throw error;
-      if (milestone.imagePath) await deleteMilestoneImage(milestone.imagePath);
-    } catch (error) {
-      if (newPath) await deleteMilestoneImage(newPath);
-      showDataError(error);
-      return;
-    }
-    await reloadState();
-    $("#trophyImageDialog").close();
-    refresh();
-  });
+    $("#resourceForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const itemId = String(data.get("itemId"));
+      await runWrite(() => db.from("resources").insert({
+        item_id: itemId,
+        label: String(data.get("label")).trim(),
+        type: String(data.get("type") || "").trim(),
+        url: String(data.get("url")).trim(),
+        note: String(data.get("note") || "").trim()
+      }));
+      await db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId);
+      await reloadState();
+      $("#resourceDialog").close();
+      refresh();
+    });
 
-  $("#curiosityForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    await runWrite(() => db.from("curiosities").insert({
-      hobby_id: hobbyId,
-      title: String(data.get("title")).trim(),
-      url: String(data.get("url") || "").trim(),
-      note: String(data.get("note") || "").trim()
-    }));
-    await reloadState();
-    event.currentTarget.reset();
-    $("#curiosityDialog").close();
-    refresh();
-  });
+    $("#milestoneForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const status = String(data.get("status"));
+      const date = String(data.get("date") || "");
+      const file = data.get("image");
+      let imagePath = "";
+      try {
+        if (file instanceof File && file.size) imagePath = await uploadMilestoneImage(file, hobbyId);
+        const result = await db.from("milestones").insert({
+          hobby_id: hobbyId,
+          title: String(data.get("title")).trim(),
+          type: String(data.get("type")),
+          status,
+          target_date: status === "working" && date ? date : null,
+          achieved_date: status === "achieved" ? (date || todayISO()) : null,
+          note: String(data.get("note") || "").trim(),
+          image_path: imagePath || null,
+          visibility: "auto"
+        });
+        if (result.error) throw result.error;
+      } catch (error) {
+        if (imagePath) await deleteMilestoneImage(imagePath);
+        showDataError(error);
+        return;
+      }
+      await reloadState();
+      event.currentTarget.reset();
+      $("#milestoneDialog").close();
+      refresh();
+    });
+
+    $("#trophyImageForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const milestone = state.milestones.find(x => x.id === String(data.get("milestoneId")));
+      const file = data.get("image");
+      if (!milestone || !(file instanceof File) || !file.size) return;
+      let newPath = "";
+      try {
+        newPath = await uploadMilestoneImage(file, hobbyId);
+        const { error } = await db.from("milestones").update({ image_path: newPath }).eq("id", milestone.id);
+        if (error) throw error;
+        if (milestone.imagePath) await deleteMilestoneImage(milestone.imagePath);
+      } catch (error) {
+        if (newPath) await deleteMilestoneImage(newPath);
+        showDataError(error);
+        return;
+      }
+      await reloadState();
+      $("#trophyImageDialog").close();
+      refresh();
+    });
+
+    $("#curiosityForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      await runWrite(() => db.from("curiosities").insert({
+        hobby_id: hobbyId,
+        title: String(data.get("title")).trim(),
+        url: String(data.get("url") || "").trim(),
+        note: String(data.get("note") || "").trim()
+      }));
+      await reloadState();
+      event.currentTarget.reset();
+      $("#curiosityDialog").close();
+      refresh();
+    });
+  }
 
   refresh();
+}
+
+function renderCurrentPage() {
+  if (document.body.dataset.page === "home") renderHome();
+  else if (document.body.dataset.page === "hobby") initHobbyPage(resolveHobbyPageConfig());
 }
 
 async function enterAuthenticatedApp() {
@@ -1163,15 +1293,26 @@ async function enterAuthenticatedApp() {
   currentUser = data.session.user;
   $("#app").innerHTML = `<div class="app-loading">Loading journal…</div>`;
   try {
-    await loadState();
+    await loadOwnerState();
   } catch (error) {
     console.error(error);
     renderSetupRequired(`Supabase is connected, but the journal tables could not be loaded: ${error.message}`);
     return;
   }
+  renderCurrentPage();
+}
 
-  if (document.body.dataset.page === "home") renderHome();
-  else if (window.HOBBY_PAGE) initHobbyPage(window.HOBBY_PAGE);
+async function enterPublicApp() {
+  currentUser = null;
+  $("#app").innerHTML = `<div class="app-loading">Loading journal…</div>`;
+  try {
+    await loadPublicState();
+  } catch (error) {
+    console.error(error);
+    renderSetupRequired(`Supabase is connected, but the public journal could not be loaded: ${error.message}`);
+    return;
+  }
+  renderCurrentPage();
 }
 
 async function boot() {
@@ -1187,14 +1328,11 @@ async function boot() {
   db = createDatabaseClient();
   const { data, error } = await db.auth.getSession();
   if (error) {
-    renderAuth(error.message);
+    await enterPublicApp();
     return;
   }
-  if (!data.session) {
-    renderAuth();
-    return;
-  }
-  await enterAuthenticatedApp();
+  if (data.session) await enterAuthenticatedApp();
+  else await enterPublicApp();
 }
 
 boot();

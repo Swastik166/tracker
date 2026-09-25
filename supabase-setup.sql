@@ -1,7 +1,6 @@
--- My Hobbies — clean Supabase setup
--- Run this once in Supabase Dashboard > SQL Editor.
--- This script creates the app tables, Row Level Security policies,
--- and the private Storage bucket used by trophy images.
+-- My Hobbies — Supabase setup (public read-only + private owner mode)
+-- Safe to re-run. If you previously ran the v5 setup and have no data yet,
+-- just run this entire file again.
 
 create extension if not exists pgcrypto;
 
@@ -18,6 +17,7 @@ create table if not exists public.items (
   next_action text not null default '',
   archived boolean not null default false,
   is_focus boolean not null default false,
+  visibility text not null default 'public' check (visibility in ('public', 'private')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   touched_at timestamptz not null default now(),
@@ -46,6 +46,7 @@ create table if not exists public.milestones (
   achieved_date date,
   note text not null default '',
   image_path text,
+  visibility text not null default 'auto' check (visibility in ('auto', 'public', 'private')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -68,6 +69,7 @@ create table if not exists public.activity (
   activity_date date not null default current_date,
   minutes integer not null check (minutes > 0 and minutes <= 1440),
   note text not null default '',
+  public_heatmap boolean not null default true,
   created_at timestamptz not null default now()
 );
 
@@ -78,6 +80,20 @@ create table if not exists public.hobby_notes (
   updated_at timestamptz not null default now(),
   primary key (user_id, hobby_id)
 );
+
+-- Upgrade columns for anyone who already ran the previous empty schema.
+alter table public.items add column if not exists visibility text not null default 'public';
+alter table public.milestones add column if not exists visibility text not null default 'auto';
+alter table public.activity add column if not exists public_heatmap boolean not null default true;
+
+-- Keep the allowed values constrained even after an upgrade.
+do $$ begin
+  alter table public.items add constraint items_visibility_check check (visibility in ('public', 'private'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table public.milestones add constraint milestones_visibility_check check (visibility in ('auto', 'public', 'private'));
+exception when duplicate_object then null; end $$;
 
 create index if not exists items_user_hobby_idx on public.items(user_id, hobby_id);
 create index if not exists items_touched_idx on public.items(user_id, touched_at desc);
@@ -106,7 +122,6 @@ drop trigger if exists milestones_set_updated_at on public.milestones;
 create trigger milestones_set_updated_at before update on public.milestones
 for each row execute function public.set_updated_at();
 
--- Lock the tables to signed-in users, then use RLS to isolate each user's rows.
 alter table public.items enable row level security;
 alter table public.resources enable row level security;
 alter table public.milestones enable row level security;
@@ -114,10 +129,31 @@ alter table public.curiosities enable row level security;
 alter table public.activity enable row level security;
 alter table public.hobby_notes enable row level security;
 
+-- Start from no anonymous privileges, then grant only the public read columns.
 revoke all on public.items, public.resources, public.milestones, public.curiosities, public.activity, public.hobby_notes from anon;
+
 grant select, insert, update, delete on public.items, public.resources, public.milestones, public.curiosities, public.activity, public.hobby_notes to authenticated;
 
--- Re-running the script is safe: replace the policies cleanly.
+-- Public visitors can read only deliberately public content.
+-- next_action and is_focus are intentionally NOT granted to anon.
+grant select (
+  id, hobby_id, title, kind, status, progress, tags, notes,
+  archived, visibility, created_at, updated_at, touched_at, completed_at
+) on public.items to anon;
+
+grant select (id, item_id, label, type, url, note, created_at)
+on public.resources to anon;
+
+grant select (
+  id, hobby_id, title, type, status, target_date, achieved_date,
+  note, image_path, visibility, created_at, updated_at
+) on public.milestones to anon;
+
+-- Public heatmaps expose only these three columns. Activity notes and item links stay private.
+grant select (hobby_id, activity_date, minutes)
+on public.activity to anon;
+
+-- Owner policies.
 drop policy if exists "items own rows" on public.items;
 create policy "items own rows" on public.items for all to authenticated
 using ((select auth.uid()) = user_id)
@@ -148,7 +184,36 @@ create policy "hobby notes own rows" on public.hobby_notes for all to authentica
 using ((select auth.uid()) = user_id)
 with check ((select auth.uid()) = user_id);
 
--- Private trophy-image bucket. 5 MB maximum per image.
+-- Public read policies.
+drop policy if exists "items public read" on public.items;
+create policy "items public read" on public.items for select to anon
+using (visibility = 'public' and archived = false);
+
+drop policy if exists "resources public read" on public.resources;
+create policy "resources public read" on public.resources for select to anon
+using (
+  exists (
+    select 1
+    from public.items i
+    where i.id = item_id
+      and i.visibility = 'public'
+      and i.archived = false
+  )
+);
+
+drop policy if exists "milestones public read" on public.milestones;
+create policy "milestones public read" on public.milestones for select to anon
+using (
+  visibility = 'public'
+  or (visibility = 'auto' and status = 'achieved')
+);
+
+drop policy if exists "activity public heatmap read" on public.activity;
+create policy "activity public heatmap read" on public.activity for select to anon
+using (public_heatmap = true);
+
+-- Trophy images stay in a private bucket. The owner can always read/write their own files.
+-- Public visitors can request a temporary signed URL only for images attached to public achieved milestones.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'milestone-images',
@@ -184,4 +249,18 @@ on storage.objects for delete to authenticated
 using (
   bucket_id = 'milestone-images'
   and (storage.foldername(name))[1] = (select auth.uid()::text)
+);
+
+drop policy if exists "read public milestone images" on storage.objects;
+create policy "read public milestone images"
+on storage.objects for select to anon
+using (
+  bucket_id = 'milestone-images'
+  and exists (
+    select 1
+    from public.milestones m
+    where m.image_path = name
+      and m.status = 'achieved'
+      and (m.visibility = 'public' or m.visibility = 'auto')
+  )
 );

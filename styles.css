@@ -686,3 +686,35 @@ code {
   .history-month { grid-template-columns: 1fr; gap: 7px; }
   .history-months { padding-left: 0; }
 }
+
+/* v6: public read-only mode + lightweight visibility controls */
+.public-home-grid { grid-template-columns: 1fr; }
+.public-view-note { margin: 12px 0 0; }
+.visibility-select {
+  width: auto;
+  min-width: 78px;
+  padding: 3px 24px 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+.visibility-select:focus { outline: 1px solid var(--accent); }
+.checkbox-label {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 9px !important;
+}
+.checkbox-label input {
+  width: auto !important;
+  margin: 0;
+}
+.auth-back { margin-top: 18px; }
+.trophy-visibility { margin-bottom: 8px; }
+
+@media (max-width: 640px) {
+  .visibility-select { min-width: 74px; }
+}
