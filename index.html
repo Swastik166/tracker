@@ -8,54 +8,10 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body data-page="home">
-  <header class="site-header">
-    <div class="page-width header-inner">
-      <a class="site-title" href="index.html">My Hobbies</a>
-      <button class="quiet-button" id="themeToggle" type="button" aria-label="Toggle dark mode">Dark</button>
-    </div>
-  </header>
+  <div id="app" class="app-loading">Loading…</div>
 
-  <main class="page-width home-main">
-    <section class="home-intro">
-      <h1>My hobbies</h1>
-      <p>A quiet place to keep track of what I’m learning, making, practicing, and saving for later.</p>
-    </section>
-
-    <section aria-labelledby="hobbiesTitle">
-      <div class="section-line">
-        <h2 id="hobbiesTitle">Hobbies</h2>
-        <span id="hobbyCount" class="muted"></span>
-      </div>
-      <div id="hobbyList" class="hobby-list"></div>
-    </section>
-
-    <section class="home-grid">
-      <div class="plain-panel">
-        <div class="section-line">
-          <h2>Recent activity</h2>
-          <span id="totalMinutes" class="muted"></span>
-        </div>
-        <div class="heatmap-wrap">
-          <div id="homeHeatmap" class="heatmap" aria-label="Overall activity heatmap"></div>
-        </div>
-        <div id="recentActivity" class="simple-list"></div>
-      </div>
-
-      <div class="plain-panel">
-        <h2>Backup</h2>
-        <p class="muted copy-small">My entries are currently saved in this browser. I can export a backup whenever I want.</p>
-        <div class="button-row">
-          <button id="exportButton" class="quiet-button" type="button">Export data</button>
-          <label class="quiet-button file-button">Import data<input id="importInput" type="file" accept="application/json" hidden /></label>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <footer class="page-width footer">
-    <span>Personal hobby journal</span>
-  </footer>
-
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script src="hobbies.js"></script>
   <script src="app.js"></script>
 </body>

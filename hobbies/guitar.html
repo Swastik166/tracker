@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="My Guitar notes, projects, and learning log." />
+  <meta name="description" content="My Guitar hobby journal." />
   <title>Guitar · My Hobbies</title>
   <link rel="stylesheet" href="../styles.css" />
 </head>
 <body data-page="hobby">
-  <div id="app"></div>
+  <div id="app" class="app-loading">Loading…</div>
   <script>
     window.HOBBY_PAGE = {
       id: "guitar",
@@ -16,6 +16,8 @@
       description: "Songs, technique, theory, and practice notes."
     };
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../config.js"></script>
   <script src="../app.js"></script>
 </body>
 </html>

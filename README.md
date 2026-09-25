@@ -1,61 +1,82 @@
-# My Hobbies
+# My Hobbies — Supabase version
 
-A quiet personal website for documenting hobbies, activity, learning, projects, resources, milestones, notes, and ideas.
+A personal hobby journal for GitHub Pages. The site stays static and simple; personal content is saved in Supabase so it can be used from multiple devices.
 
-## Structure
+## What is included
+
+- One real HTML page per hobby
+- Combined Learning / Project items with a lightweight type tag
+- Planned / Active / Paused / Done states
+- Up to two pinned **Current focus** items per hobby
+- Automatic **Last touched** dates
+- Activity heatmap and practice logging
+- Project-specific resource shelves
+- Working milestones + trophy case
+- Optional private trophy images stored in Supabase Storage
+- Curiosity inbox
+- Automatic year/month history generated from existing data
+- Manual archived-items area
+- Autosaving hobby notes
+- Supabase email/password login
+- Row Level Security so signed-in users only see their own rows
+- No hobby data in localStorage
+
+## First setup
+
+Read `SUPABASE_SETUP.md` and run `supabase-setup.sql` in a new Supabase project.
+
+Then edit `config.js` with your Supabase Project URL and **publishable** key.
+
+## Files
 
 ```text
 index.html              Home / hobby index
 styles.css              Shared visual design
-app.js                   Shared behavior and local data storage
-hobbies.js               List of hobbies shown on the home page
+app.js                   Shared UI + Supabase database logic
+config.js                Supabase URL + publishable browser key
+hobbies.js               Hobbies shown on the home page
+supabase-setup.sql        Database, security policies, Storage bucket
+SUPABASE_SETUP.md         Full setup instructions
+ADDING_A_HOBBY.md         How to add another hobby page
 hobbies/
-  _template.html         Copy this when adding a hobby
+  _template.html
   coding.html
   photography.html
   guitar.html
   cooking.html
-ADDING_A_HOBBY.md        Short instructions for adding another hobby
 ```
 
-Each hobby is a real separate HTML page, but all hobby pages use the same layout and JavaScript. The individual hobby files therefore stay very small.
+## Storage note
 
-## What each hobby page contains
+The journal data itself is stored only in Supabase. Supabase Auth uses browser `sessionStorage` for the login session so navigating between hobby pages does not require signing in again. Closing that browser tab/session can require signing in again. The app does not use `localStorage` for hobby data or migration.
 
-- Activity heatmap and recent practice log
-- Simple autosaving hobby notes
-- One combined **Learning & projects** list
-- A lightweight `Learning` / `Project` type tag
-- Planned / Active / Paused / Done status
-- Next action, notes, tags, and optional progress
-- A resource shelf on project-type items
-- Milestones split into **Working toward** and a **Trophy case**
-- Curiosity inbox
-- Archive
 
-The combined item list is deliberate: learning something and making something often overlap, so the site does not force them into separate workflows.
+## Working
 
-## Adding a hobby
+Github = application; Supabase = database; browser = messenger.
+When site is accessed, the browser loads the static HTML/CSS/JS from GitHub Pages. These files describe the site and its behaviour. The JS code then connects to Supabase to read/write hobby data. Sign in with email/password is required to access the data.
 
-See `ADDING_A_HOBBY.md`. In short: copy `hobbies/_template.html`, edit three values, then add one entry to `hobbies.js`.
+The contents(items, resources, milestones, activity, curiosities and hobby notes) are stored in Supabase's PostgreSQL database.
 
-## Publish with GitHub Pages
+The flow of data is:
+save -> app.js in browser -> Supabase data API (via HTTPS request) -> PostgreSQL database (inserts row into "items")3
 
-1. Put these files in the repository root.
-2. Open the repository on GitHub.
-3. Go to **Settings → Pages**.
-4. Under **Build and deployment**, choose **Deploy from a branch**.
-5. Select the main branch and `/ (root)`.
-6. Save.
+Database:
+items
 
-## Data storage
-
-The current version stores personal entries in browser `localStorage`. The data model is shared across all hobby pages and is stored under one key, so the home page can summarize activity from every hobby.
-
-This version automatically migrates the previous separate project list into the combined item list. Project resources are preserved.
-
-It also supports older `learning-atlas-state-v2` data where possible.
-
-Use **Export data** on the home page for backups.
-
-A future Supabase version can replace the storage functions without changing the page structure.
+id
+user_id
+hobby_id
+title
+kind
+status
+progress
+tags
+notes
+next_action
+archived
+is_focus
+created_at
+updated_at
+touched_at
+completed_at

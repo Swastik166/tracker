@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="My Photography notes, projects, and learning log." />
+  <meta name="description" content="My Photography hobby journal." />
   <title>Photography · My Hobbies</title>
   <link rel="stylesheet" href="../styles.css" />
 </head>
 <body data-page="hobby">
-  <div id="app"></div>
+  <div id="app" class="app-loading">Loading…</div>
   <script>
     window.HOBBY_PAGE = {
       id: "photography",
@@ -16,6 +16,8 @@
       description: "Techniques, ideas, photo projects, and visual references."
     };
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../config.js"></script>
   <script src="../app.js"></script>
 </body>
 </html>

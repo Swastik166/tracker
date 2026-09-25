@@ -1,19 +1,22 @@
-const STATE_KEY = "personal-hobby-journal-v3";
-const LEGACY_STATE_KEY = "learning-atlas-state-v2";
-const THEME_KEY = "hobby-journal-theme";
-
-const emptyState = () => ({
-  items: [],
-  projects: [],
-  milestones: [],
-  curiosities: [],
-  activity: [],
-  hobbyNotes: {}
-});
-
-let state = loadState();
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+let db = null;
+let currentUser = null;
+let state = emptyState();
+let editingItemId = null;
+const signedImageCache = new Map();
+
+function emptyState() {
+  return {
+    items: [],
+    resources: [],
+    milestones: [],
+    curiosities: [],
+    activity: [],
+    hobbyNotes: {}
+  };
+}
 
 function escapeHTML(value = "") {
   return String(value).replace(/[&<>"']/g, char => ({
@@ -21,124 +24,32 @@ function escapeHTML(value = "") {
   })[char]);
 }
 
-function slugify(value = "") {
-  return String(value).trim().toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function normalizedStatus(status = "planned") {
-  return ({
-    planned: "planned",
-    idea: "planned",
-    learning: "active",
-    active: "active",
-    paused: "paused",
-    learned: "done",
-    done: "done"
-  })[status] || "planned";
-}
-
-function normalizeState(input = {}) {
-  const itemMap = new Map();
-
-  (Array.isArray(input.items) ? input.items : []).forEach(x => {
-    const item = {
-      ...x,
-      hobbyId: x.hobbyId || slugify(x.hobby || "general"),
-      kind: x.kind === "project" ? "project" : "learning",
-      status: normalizedStatus(x.status),
-      archived: Boolean(x.archived),
-      nextAction: x.nextAction || "",
-      tags: Array.isArray(x.tags) ? x.tags : [],
-      resources: Array.isArray(x.resources) ? x.resources : []
-    };
-    itemMap.set(item.id || crypto.randomUUID(), item);
-  });
-
-  // v3 kept projects in a separate array. Convert them once into normal items.
-  (Array.isArray(input.projects) ? input.projects : []).forEach(project => {
-    const id = project.id || crypto.randomUUID();
-    if (itemMap.has(id)) return;
-    itemMap.set(id, {
-      id,
-      hobbyId: project.hobbyId || slugify(project.hobby || "general"),
-      kind: "project",
-      title: project.title || "Untitled project",
-      status: normalizedStatus(project.status),
-      progress: Math.min(100, Math.max(0, Number(project.progress) || 0)),
-      notes: project.description || "",
-      nextAction: project.nextAction || "",
-      tags: Array.isArray(project.tags) ? project.tags : [],
-      resources: Array.isArray(project.resources) ? project.resources : [],
-      archived: Boolean(project.archived)
-    });
-  });
-
-  return {
-    items: [...itemMap.values()],
-    projects: [],
-    milestones: Array.isArray(input.milestones) ? input.milestones.map(x => ({
-      ...x,
-      hobbyId: x.hobbyId || slugify(x.hobby || "general"),
-      status: x.status === "achieved" || x.done ? "achieved" : "working",
-      targetDate: x.targetDate || "",
-      achievedDate: x.achievedDate || (x.done ? (x.targetDate || "") : ""),
-      done: undefined
-    })) : [],
-    curiosities: Array.isArray(input.curiosities) ? input.curiosities.map(x => ({
-      ...x,
-      hobbyId: x.hobbyId || slugify(x.hobby || "general")
-    })) : [],
-    activity: Array.isArray(input.activity) ? input.activity.map(x => {
-      let hobbyId = x.hobbyId;
-      if (!hobbyId && x.itemId) {
-        const sourceItems = Array.isArray(input.items) ? input.items : [];
-        const item = sourceItems.find(item => item.id === x.itemId);
-        hobbyId = item ? (item.hobbyId || slugify(item.hobby || "general")) : "general";
-      }
-      return { ...x, hobbyId: hobbyId || "general" };
-    }) : [],
-    hobbyNotes: input.hobbyNotes && typeof input.hobbyNotes === "object" ? input.hobbyNotes : {}
-  };
-}
-
-function loadState() {
-  const saved = localStorage.getItem(STATE_KEY);
-  if (saved) {
-    try {
-      const normalized = normalizeState(JSON.parse(saved));
-      localStorage.setItem(STATE_KEY, JSON.stringify(normalized));
-      return normalized;
-    } catch {}
-  }
-
-  const legacy = localStorage.getItem(LEGACY_STATE_KEY);
-  if (legacy) {
-    try {
-      const migrated = normalizeState(JSON.parse(legacy));
-      localStorage.setItem(STATE_KEY, JSON.stringify(migrated));
-      return migrated;
-    } catch {}
-  }
-  return emptyState();
-}
-
-function saveState() {
-  localStorage.setItem(STATE_KEY, JSON.stringify(state));
-}
-
-function formatDate(dateString) {
-  if (!dateString) return "";
-  const date = new Date(`${dateString}T12:00:00`);
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(date);
-}
-
 function todayISO() {
-  const date = new Date();
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+}
+
+function formatDate(value, includeYear = true) {
+  if (!value) return "";
+  const date = value.includes?.("T") ? new Date(value) : new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  const options = includeYear
+    ? { day: "numeric", month: "short", year: "numeric" }
+    : { day: "numeric", month: "short" };
+  return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function monthName(monthIndex) {
+  return new Intl.DateTimeFormat(undefined, { month: "long" }).format(new Date(2026, monthIndex, 1));
+}
+
+function minutesLabel(minutes) {
+  const total = Number(minutes || 0);
+  if (total < 60) return `${total}m`;
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+  return mins ? `${hours}h ${mins}m` : `${hours}h`;
 }
 
 function activityLevel(minutes) {
@@ -153,7 +64,9 @@ function activityLevel(minutes) {
 function buildHeatmap(target, entries, days = 182) {
   if (!target) return;
   const totals = new Map();
-  entries.forEach(entry => totals.set(entry.date, (totals.get(entry.date) || 0) + Number(entry.minutes || 0)));
+  entries.forEach(entry => {
+    totals.set(entry.date, (totals.get(entry.date) || 0) + Number(entry.minutes || 0));
+  });
 
   const end = new Date();
   end.setHours(12, 0, 0, 0);
@@ -174,179 +87,363 @@ function buildHeatmap(target, entries, days = 182) {
   }
 }
 
-function applyTheme() {
-  if (localStorage.getItem(THEME_KEY) === "dark") document.body.classList.add("dark");
-  const button = $("#themeToggle");
-  if (button) button.textContent = document.body.classList.contains("dark") ? "Light" : "Dark";
+function isConfigured() {
+  const config = window.SUPABASE_CONFIG || {};
+  return Boolean(
+    config.url &&
+    config.publishableKey &&
+    !config.url.includes("YOUR-PROJECT") &&
+    !config.publishableKey.includes("REPLACE_ME")
+  );
+}
+
+function createDatabaseClient() {
+  const config = window.SUPABASE_CONFIG;
+  return window.supabase.createClient(config.url, config.publishableKey, {
+    auth: {
+      storage: window.sessionStorage,
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  });
+}
+
+function initialTheme() {
+  if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
+    document.body.classList.add("dark");
+  }
 }
 
 function bindThemeButton() {
   const button = $("#themeToggle");
   if (!button) return;
+  button.textContent = document.body.classList.contains("dark") ? "Light" : "Dark";
   button.addEventListener("click", () => {
     document.body.classList.toggle("dark");
-    localStorage.setItem(THEME_KEY, document.body.classList.contains("dark") ? "dark" : "light");
     button.textContent = document.body.classList.contains("dark") ? "Light" : "Dark";
   });
 }
 
-function exportData() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+function renderSetupRequired(message = "") {
+  $("#app").className = "";
+  $("#app").innerHTML = `
+    <main class="auth-shell page-width">
+      <section class="auth-panel">
+        <p class="eyebrow">DATABASE SETUP</p>
+        <h1>Connect Supabase</h1>
+        <p>This copy of the site has not been connected to its database yet.</p>
+        <ol class="setup-list">
+          <li>Create a Supabase project.</li>
+          <li>Run <code>supabase-setup.sql</code> in its SQL Editor.</li>
+          <li>Put the Project URL and publishable key into <code>config.js</code>.</li>
+        </ol>
+        ${message ? `<p class="error-note">${escapeHTML(message)}</p>` : ""}
+        <p class="muted copy-small">Full instructions are included in <code>SUPABASE_SETUP.md</code>.</p>
+      </section>
+    </main>`;
+}
+
+function renderAuth(message = "") {
+  $("#app").className = "";
+  $("#app").innerHTML = `
+    <main class="auth-shell page-width">
+      <section class="auth-panel">
+        <p class="eyebrow">MY HOBBIES</p>
+        <h1>Sign in</h1>
+        <p class="muted">My notes and progress are saved in the private database after I sign in.</p>
+        <form id="authForm" class="auth-form">
+          <label>Email<input name="email" type="email" autocomplete="email" required /></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" minlength="6" required /></label>
+          <div class="button-row">
+            <button class="primary-button" type="submit">Sign in</button>
+            ${window.SUPABASE_CONFIG?.showCreateAccount !== false ? `<button class="quiet-button" id="createAccountButton" type="button">Create account</button>` : ""}
+          </div>
+        </form>
+        <p id="authMessage" class="auth-message ${message ? "visible" : ""}">${escapeHTML(message)}</p>
+        <p class="muted copy-small auth-help">${window.SUPABASE_CONFIG?.showCreateAccount !== false ? "The create-account button is only needed for the first account. After that, disable new signups in Supabase." : "Use the account already created for this journal."}</p>
+      </section>
+    </main>`;
+
+  const form = $("#authForm");
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const data = new FormData(form);
+    setAuthMessage("Signing in…");
+    const { error } = await db.auth.signInWithPassword({
+      email: String(data.get("email")).trim(),
+      password: String(data.get("password"))
+    });
+    if (error) {
+      setAuthMessage(error.message, true);
+      return;
+    }
+    await enterAuthenticatedApp();
+  });
+
+  $("#createAccountButton")?.addEventListener("click", async () => {
+    if (!form.reportValidity()) return;
+    const data = new FormData(form);
+    setAuthMessage("Creating account…");
+    const redirectTo = window.location.href.split("#")[0].split("?")[0];
+    const { data: result, error } = await db.auth.signUp({
+      email: String(data.get("email")).trim(),
+      password: String(data.get("password")),
+      options: { emailRedirectTo: redirectTo }
+    });
+    if (error) {
+      setAuthMessage(error.message, true);
+      return;
+    }
+    if (result.session) {
+      await enterAuthenticatedApp();
+    } else {
+      setAuthMessage("Account created. Check your email and open the confirmation link, then return here and sign in.");
+    }
+  });
+}
+
+function setAuthMessage(message, isError = false) {
+  const target = $("#authMessage");
+  if (!target) return;
+  target.textContent = message;
+  target.classList.add("visible");
+  target.classList.toggle("error-note", isError);
+}
+
+async function signOut() {
+  await db.auth.signOut();
+  currentUser = null;
+  state = emptyState();
+  renderAuth("Signed out.");
+}
+
+function bindGlobalHeader() {
+  bindThemeButton();
+  $("#signOutButton")?.addEventListener("click", signOut);
+}
+
+function mapItem(row) {
+  return {
+    id: row.id,
+    hobbyId: row.hobby_id,
+    title: row.title,
+    kind: row.kind,
+    status: row.status,
+    progress: row.progress,
+    tags: row.tags || [],
+    notes: row.notes || "",
+    nextAction: row.next_action || "",
+    archived: Boolean(row.archived),
+    isFocus: Boolean(row.is_focus),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    touchedAt: row.touched_at,
+    completedAt: row.completed_at,
+    resources: []
+  };
+}
+
+function mapResource(row) {
+  return {
+    id: row.id,
+    itemId: row.item_id,
+    label: row.label,
+    type: row.type || "",
+    url: row.url,
+    note: row.note || "",
+    createdAt: row.created_at
+  };
+}
+
+function mapMilestone(row) {
+  return {
+    id: row.id,
+    hobbyId: row.hobby_id,
+    title: row.title,
+    type: row.type,
+    status: row.status,
+    targetDate: row.target_date || "",
+    achievedDate: row.achieved_date || "",
+    note: row.note || "",
+    imagePath: row.image_path || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapCuriosity(row) {
+  return {
+    id: row.id,
+    hobbyId: row.hobby_id,
+    title: row.title,
+    url: row.url || "",
+    note: row.note || "",
+    createdAt: row.created_at
+  };
+}
+
+function mapActivity(row) {
+  return {
+    id: row.id,
+    hobbyId: row.hobby_id,
+    itemId: row.item_id || "",
+    date: row.activity_date,
+    minutes: row.minutes,
+    note: row.note || "",
+    createdAt: row.created_at
+  };
+}
+
+async function loadState() {
+  const [itemsResult, resourcesResult, milestonesResult, curiositiesResult, activityResult, notesResult] = await Promise.all([
+    db.from("items").select("*").order("touched_at", { ascending: false }),
+    db.from("resources").select("*").order("created_at", { ascending: true }),
+    db.from("milestones").select("*").order("created_at", { ascending: false }),
+    db.from("curiosities").select("*").order("created_at", { ascending: false }),
+    db.from("activity").select("*").order("activity_date", { ascending: false }).order("created_at", { ascending: false }),
+    db.from("hobby_notes").select("*")
+  ]);
+
+  const failure = [itemsResult, resourcesResult, milestonesResult, curiositiesResult, activityResult, notesResult].find(x => x.error);
+  if (failure) throw failure.error;
+
+  const items = itemsResult.data.map(mapItem);
+  const resources = resourcesResult.data.map(mapResource);
+  const resourceMap = new Map();
+  resources.forEach(resource => {
+    if (!resourceMap.has(resource.itemId)) resourceMap.set(resource.itemId, []);
+    resourceMap.get(resource.itemId).push(resource);
+  });
+  items.forEach(item => item.resources = resourceMap.get(item.id) || []);
+
+  state = {
+    items,
+    resources,
+    milestones: milestonesResult.data.map(mapMilestone),
+    curiosities: curiositiesResult.data.map(mapCuriosity),
+    activity: activityResult.data.map(mapActivity),
+    hobbyNotes: Object.fromEntries(notesResult.data.map(row => [row.hobby_id, row.content || ""]))
+  };
+}
+
+async function reloadState() {
+  await loadState();
+}
+
+function showDataError(error) {
+  console.error(error);
+  const message = error?.message || "Something went wrong while saving.";
+  alert(message);
+}
+
+async function runWrite(operation) {
+  try {
+    const result = await operation();
+    if (result?.error) throw result.error;
+    return result;
+  } catch (error) {
+    showDataError(error);
+    throw error;
+  }
+}
+
+function exportSnapshot() {
+  const data = {
+    exportedAt: new Date().toISOString(),
+    items: state.items,
+    milestones: state.milestones,
+    curiosities: state.curiosities,
+    activity: state.activity,
+    hobbyNotes: state.hobbyNotes
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `my-hobbies-backup-${todayISO()}.json`;
+  a.download = `my-hobbies-snapshot-${todayISO()}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-async function importData(file) {
-  if (!file) return;
-  try {
-    const parsed = JSON.parse(await file.text());
-    state = normalizeState(parsed);
-    saveState();
-    location.reload();
-  } catch {
-    alert("That file does not look like a valid backup.");
-  }
-}
-
-function bindBackupControls() {
-  $("#exportButton")?.addEventListener("click", exportData);
-  $("#importInput")?.addEventListener("change", event => importData(event.target.files?.[0]));
-}
-
 function renderHome() {
   const registry = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
-  const list = $("#hobbyList");
-  $("#hobbyCount").textContent = `${registry.length} ${registry.length === 1 ? "hobby" : "hobbies"}`;
-
-  list.innerHTML = registry.map(hobby => {
-    const items = state.items.filter(x => x.hobbyId === hobby.id && !x.archived);
-    const active = items.filter(x => x.status === "active").length;
-    const trophies = state.milestones.filter(x => x.hobbyId === hobby.id && x.status === "achieved").length;
-    return `<a class="hobby-link" href="${escapeHTML(hobby.page)}">
-      <span>
-        <span class="hobby-name">${escapeHTML(hobby.name)}</span>
-        <span class="hobby-description">${escapeHTML(hobby.description || "")}</span>
-      </span>
-      <span class="hobby-meta"><span>${active} active</span><span>${trophies} milestones</span><span>→</span></span>
-    </a>`;
-  }).join("");
-
-  const activity = [...state.activity].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  buildHeatmap($("#homeHeatmap"), activity);
-  $("#totalMinutes").textContent = `${activity.reduce((sum, x) => sum + Number(x.minutes || 0), 0)} min logged`;
-
-  const recent = activity.slice(0, 6);
-  const recentTarget = $("#recentActivity");
-  if (!recent.length) {
-    recentTarget.innerHTML = `<div class="empty-state">No activity logged yet.</div>`;
-  } else {
-    recentTarget.innerHTML = recent.map(entry => {
-      const hobby = registry.find(x => x.id === entry.hobbyId);
-      return `<div class="simple-row">
-        <span>${escapeHTML(entry.note || "Practice session")}</span>
-        <span class="muted">${escapeHTML(hobby?.name || entry.hobbyId)} · ${entry.minutes} min · ${formatDate(entry.date)}</span>
-      </div>`;
-    }).join("");
-  }
-}
-
-function renderHobbyShell(config) {
-  document.title = `${config.name} · My Hobbies`;
-  const app = $("#app");
-  app.innerHTML = `
+  document.title = "My Hobbies";
+  $("#app").className = "";
+  $("#app").innerHTML = `
     <header class="site-header">
       <div class="page-width header-inner">
-        <div class="breadcrumbs"><a href="../index.html">My Hobbies</a> / ${escapeHTML(config.name)}</div>
-        <button class="quiet-button" id="themeToggle" type="button">Dark</button>
+        <a class="site-title" href="index.html">My Hobbies</a>
+        <div class="button-row">
+          <button class="quiet-button" id="themeToggle" type="button">Dark</button>
+          <button class="text-button" id="signOutButton" type="button">Sign out</button>
+        </div>
       </div>
     </header>
 
-    <main class="page-width hobby-main">
-      <section class="hobby-heading">
-        <div>
-          <h1>${escapeHTML(config.name)}</h1>
-          <p>${escapeHTML(config.description || "")}</p>
-        </div>
-        <div class="button-row">
-          <button id="logActivityButton" class="quiet-button" type="button">Log activity</button>
-          <button id="addItemButton" class="primary-button" type="button">Add item</button>
-        </div>
+    <main class="page-width home-main">
+      <section class="home-intro">
+        <h1>My hobbies</h1>
+        <p>A quiet place to keep track of what I’m learning, making, practicing, and saving for later.</p>
       </section>
 
-      <nav class="hobby-nav" aria-label="Page sections">
-        <a href="#overview">Overview</a>
-        <a href="#work">Items</a>
-        <a href="#milestones">Milestones</a>
-        <a href="#curiosity">Curiosity</a>
-        <a href="#archive">Archive</a>
-      </nav>
-
-      <section class="summary-row" aria-label="Hobby summary">
-        <div class="summary-item"><span>Active</span><strong id="summaryActive">0</strong></div>
-        <div class="summary-item"><span>Done</span><strong id="summaryDone">0</strong></div>
-        <div class="summary-item"><span>Trophies</span><strong id="summaryTrophies">0</strong></div>
-        <div class="summary-item"><span>Time logged</span><strong id="summaryTime">0m</strong></div>
+      <section aria-labelledby="hobbiesTitle">
+        <div class="section-line">
+          <h2 id="hobbiesTitle">Hobbies</h2>
+          <span class="muted">${registry.length} ${registry.length === 1 ? "hobby" : "hobbies"}</span>
+        </div>
+        <div class="hobby-list">${registry.map(hobby => {
+          const items = state.items.filter(x => x.hobbyId === hobby.id && !x.archived);
+          const active = items.filter(x => x.status === "active").length;
+          const trophies = state.milestones.filter(x => x.hobbyId === hobby.id && x.status === "achieved").length;
+          return `<a class="hobby-link" href="${escapeHTML(hobby.page)}">
+            <span>
+              <span class="hobby-name">${escapeHTML(hobby.name)}</span>
+              <span class="hobby-description">${escapeHTML(hobby.description || "")}</span>
+            </span>
+            <span class="hobby-meta"><span>${active} active</span><span>${trophies} trophies</span><span>→</span></span>
+          </a>`;
+        }).join("")}</div>
       </section>
 
-      <section id="overview" class="section-block overview-grid">
-        <div>
-          <div class="section-heading"><div><h2>Activity</h2><p>Recent practice over time.</p></div></div>
-          <div class="heatmap-wrap"><div id="hobbyHeatmap" class="heatmap"></div></div>
-          <div id="activityCaption" class="heatmap-caption"></div>
-          <div id="activityList" class="simple-list"></div>
+      <section class="home-grid">
+        <div class="plain-panel">
+          <div class="section-line">
+            <h2>Recent activity</h2>
+            <span id="totalMinutes" class="muted"></span>
+          </div>
+          <div class="heatmap-wrap"><div id="homeHeatmap" class="heatmap" aria-label="Overall activity heatmap"></div></div>
+          <div id="recentActivity" class="simple-list"></div>
         </div>
-        <div class="notes-box">
-          <div class="section-heading"><div><h2>Notes</h2><p>A simple scratchpad for this hobby.</p></div></div>
-          <textarea id="hobbyNotes" placeholder="Notes, ideas, reminders…"></textarea>
-          <div id="notesSaved" class="autosave-note">Saved automatically in this browser.</div>
-        </div>
-      </section>
 
-      <section id="work" class="section-block">
-        <div class="section-heading">
-          <div><h2>Learning & projects</h2><p>Everything I’m working on in one place. The type is just a tag.</p></div>
-          <button id="addItemButton2" class="quiet-button" type="button">Add item</button>
+        <div class="plain-panel database-panel">
+          <h2>Saved</h2>
+          <p class="muted copy-small">Changes are stored in Supabase and available on my other devices after I sign in.</p>
+          <div class="database-status"><span class="status-dot"></span><span>${escapeHTML(currentUser.email || "Signed in")}</span></div>
+          <button id="exportButton" class="quiet-button" type="button">Download snapshot</button>
         </div>
-        <div class="toolbar toolbar-three">
-          <input id="itemSearch" type="search" placeholder="Search items…" />
-          <select id="itemStatus"><option value="all">All statuses</option><option value="planned">Planned</option><option value="active">Active</option><option value="paused">Paused</option><option value="done">Done</option></select>
-          <select id="itemKind"><option value="all">All types</option><option value="learning">Learning</option><option value="project">Project</option></select>
-        </div>
-        <div id="itemList" class="item-list"></div>
-      </section>
-
-      <section id="milestones" class="section-block">
-        <div class="section-heading">
-          <div><h2>Milestones</h2><p>What I’m working toward, and a record of what I’ve achieved.</p></div>
-          <button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>
-        </div>
-        <div id="milestoneList"></div>
-      </section>
-
-      <section id="curiosity" class="section-block">
-        <div class="section-heading">
-          <div><h2>Curiosity inbox</h2><p>Interesting things I may want to explore later, without turning them into commitments yet.</p></div>
-          <button id="addCuriosityButton" class="quiet-button" type="button">Add curiosity</button>
-        </div>
-        <div id="curiosityList" class="curiosity-list"></div>
-      </section>
-
-      <section id="archive" class="section-block">
-        <div class="section-heading"><div><h2>Archive</h2><p>Things I want to keep in the record without keeping them active.</p></div></div>
-        <div id="archiveList" class="archive-list"></div>
       </section>
     </main>
 
-    <footer class="page-width footer">
-      <span>${escapeHTML(config.name)} · My Hobbies</span>
-    </footer>
+    <footer class="page-width footer"><span>Personal hobby journal</span></footer>`;
 
-    ${dialogMarkup()}
-  `;
+  const activity = [...state.activity].sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
+  buildHeatmap($("#homeHeatmap"), activity);
+  $("#totalMinutes").textContent = `${minutesLabel(activity.reduce((sum, x) => sum + Number(x.minutes || 0), 0))} logged`;
+
+  const recent = activity.slice(0, 6);
+  const recentTarget = $("#recentActivity");
+  recentTarget.innerHTML = recent.length ? recent.map(entry => {
+    const hobby = registry.find(x => x.id === entry.hobbyId);
+    const item = state.items.find(x => x.id === entry.itemId);
+    return `<div class="simple-row">
+      <span>${escapeHTML(entry.note || item?.title || "Practice session")}</span>
+      <span class="muted">${escapeHTML(hobby?.name || entry.hobbyId)} · ${entry.minutes} min · ${formatDate(entry.date)}</span>
+    </div>`;
+  }).join("") : `<div class="empty-state">No activity logged yet.</div>`;
+
+  $("#exportButton").addEventListener("click", exportSnapshot);
+  bindGlobalHeader();
 }
 
 function dialogMarkup() {
@@ -394,189 +491,335 @@ function dialogMarkup() {
       <label>Milestone<input name="title" required /></label>
       <label>Type<select name="type"><option value="first">First</option><option value="completion">Completion</option><option value="personal-best">Personal best</option><option value="consistency">Consistency</option><option value="project">Project</option><option value="custom">Custom</option></select></label>
       <label>Status<select name="status"><option value="working">Working toward</option><option value="achieved">Already achieved</option></select></label>
-      <label>Date (optional)<input name="date" type="date" /></label>
-      <label class="full">Note<input name="note" /></label>
+      <label>Date<input name="date" type="date" /></label>
+      <label class="full">Note<input name="note" placeholder="Optional context" /></label>
+      <label class="full">Trophy image (optional)<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" /></label>
     </div>
+    <p class="form-note">Images are private in Supabase Storage and only appear in the trophy case.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="milestoneDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
+  </form></dialog>
+
+  <dialog id="trophyImageDialog"><form id="trophyImageForm" class="dialog-body">
+    <div class="dialog-heading"><h2>Add trophy image</h2><button type="button" class="dialog-close" data-close="trophyImageDialog">×</button></div>
+    <input name="milestoneId" type="hidden" />
+    <div class="form-grid"><label class="full">Image<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" required /></label></div>
+    <p class="form-note">JPEG, PNG, WebP or GIF. Maximum 5 MB.</p>
+    <div class="dialog-actions"><button type="button" class="quiet-button" data-close="trophyImageDialog">Cancel</button><button class="primary-button" type="submit">Upload</button></div>
   </form></dialog>
 
   <dialog id="curiosityDialog"><form id="curiosityForm" class="dialog-body">
     <div class="dialog-heading"><h2>Add curiosity</h2><button type="button" class="dialog-close" data-close="curiosityDialog">×</button></div>
     <div class="form-grid">
-      <label class="full">Idea<input name="title" required /></label>
-      <label class="full">URL<input name="url" type="url" placeholder="https://…" /></label>
-      <label class="full">Note<textarea name="note"></textarea></label>
+      <label class="full">What caught my attention?<input name="title" required /></label>
+      <label class="full">Link<input name="url" type="url" placeholder="https://…" /></label>
+      <label class="full">Note<textarea name="note" placeholder="Why it seems interesting"></textarea></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="curiosityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>`;
 }
 
+function renderHobbyShell(config) {
+  document.title = `${config.name} · My Hobbies`;
+  $("#app").className = "";
+  $("#app").innerHTML = `
+    <header class="site-header">
+      <div class="page-width header-inner">
+        <div class="breadcrumbs"><a href="../index.html">My Hobbies</a> / ${escapeHTML(config.name)}</div>
+        <div class="button-row"><button class="quiet-button" id="themeToggle" type="button">Dark</button><button class="text-button" id="signOutButton" type="button">Sign out</button></div>
+      </div>
+    </header>
+
+    <main class="page-width hobby-main">
+      <section class="hobby-heading">
+        <div><h1>${escapeHTML(config.name)}</h1><p>${escapeHTML(config.description || "")}</p></div>
+        <div class="button-row"><button id="logActivityButton" class="quiet-button" type="button">Log activity</button><button id="addItemButton" class="primary-button" type="button">Add item</button></div>
+      </section>
+
+      <nav class="hobby-nav" aria-label="Page sections">
+        <a href="#focus">Focus</a><a href="#overview">Overview</a><a href="#work">Items</a><a href="#milestones">Milestones</a><a href="#curiosity">Curiosity</a><a href="#history">History</a><a href="#archive">Archive</a>
+      </nav>
+
+      <section class="summary-row" aria-label="Hobby summary">
+        <div class="summary-item"><span>Active</span><strong id="summaryActive">0</strong></div>
+        <div class="summary-item"><span>Done</span><strong id="summaryDone">0</strong></div>
+        <div class="summary-item"><span>Trophies</span><strong id="summaryTrophies">0</strong></div>
+        <div class="summary-item"><span>Time logged</span><strong id="summaryTime">0m</strong></div>
+      </section>
+
+      <section id="focus" class="section-block focus-section">
+        <div class="section-heading"><div><h2>Current focus</h2><p>One or two things I want to keep visible right now.</p></div></div>
+        <div id="focusList" class="focus-list"></div>
+      </section>
+
+      <section id="overview" class="section-block overview-grid">
+        <div>
+          <div class="section-heading"><div><h2>Activity</h2><p>Recent practice over time.</p></div></div>
+          <div class="heatmap-wrap"><div id="hobbyHeatmap" class="heatmap"></div></div>
+          <div id="activityCaption" class="heatmap-caption"></div>
+          <div id="activityList" class="simple-list"></div>
+        </div>
+        <div class="notes-box">
+          <div class="section-heading"><div><h2>Notes</h2><p>A simple scratchpad for this hobby.</p></div></div>
+          <textarea id="hobbyNotes" placeholder="Notes, ideas, reminders…"></textarea>
+          <div id="notesSaved" class="autosave-note">Saved to Supabase.</div>
+        </div>
+      </section>
+
+      <section id="work" class="section-block">
+        <div class="section-heading">
+          <div><h2>Learning & projects</h2><p>Everything I’m working on in one place. The type is just a tag.</p></div>
+          <button id="addItemButton2" class="quiet-button" type="button">Add item</button>
+        </div>
+        <div class="toolbar toolbar-three">
+          <input id="itemSearch" type="search" placeholder="Search items…" />
+          <select id="itemStatus"><option value="all">All statuses</option><option value="planned">Planned</option><option value="active">Active</option><option value="paused">Paused</option><option value="done">Done</option></select>
+          <select id="itemKind"><option value="all">All types</option><option value="learning">Learning</option><option value="project">Project</option></select>
+        </div>
+        <div id="itemList" class="item-list"></div>
+      </section>
+
+      <section id="milestones" class="section-block">
+        <div class="section-heading"><div><h2>Milestones</h2><p>What I’m working toward, and a trophy case for what I’ve achieved.</p></div><button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button></div>
+        <div id="milestoneList"></div>
+      </section>
+
+      <section id="curiosity" class="section-block">
+        <div class="section-heading"><div><h2>Curiosity inbox</h2><p>Interesting things I may want to explore later, without turning them into commitments yet.</p></div><button id="addCuriosityButton" class="quiet-button" type="button">Add curiosity</button></div>
+        <div id="curiosityList" class="curiosity-list"></div>
+      </section>
+
+      <section id="history" class="section-block">
+        <div class="section-heading"><div><h2>History</h2><p>An automatic month-by-month record from things I already log.</p></div></div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+
+      <section id="archive" class="section-block">
+        <div class="section-heading"><div><h2>Archived items</h2><p>Things I want to keep in the record without keeping them in the main list.</p></div></div>
+        <div id="archiveList" class="archive-list"></div>
+      </section>
+    </main>
+
+    <footer class="page-width footer"><span>${escapeHTML(config.name)} · My Hobbies</span></footer>
+    ${dialogMarkup()}`;
+}
+
+function itemStatusLabel(status) {
+  return ({ planned: "Planned", active: "Active", paused: "Paused", done: "Done" })[status] || status;
+}
+
+function itemKindLabel(kind) {
+  return kind === "project" ? "Project" : "Learning";
+}
+
+async function getSignedImageUrl(path) {
+  if (!path) return "";
+  if (signedImageCache.has(path)) return signedImageCache.get(path);
+  const { data, error } = await db.storage.from("milestone-images").createSignedUrl(path, 3600);
+  if (error) return "";
+  signedImageCache.set(path, data.signedUrl);
+  return data.signedUrl;
+}
+
+async function uploadMilestoneImage(file, hobbyId) {
+  if (!file) return "";
+  if (file.size > 5 * 1024 * 1024) throw new Error("Trophy images must be 5 MB or smaller.");
+  const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+  if (!allowed.includes(file.type)) throw new Error("Use a JPEG, PNG, WebP or GIF image.");
+  const extension = (file.name.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const path = `${currentUser.id}/${hobbyId}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await db.storage.from("milestone-images").upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw error;
+  return path;
+}
+
+async function deleteMilestoneImage(path) {
+  if (!path) return;
+  signedImageCache.delete(path);
+  const { error } = await db.storage.from("milestone-images").remove([path]);
+  if (error) console.warn("Could not remove old trophy image", error);
+}
+
 function initHobbyPage(config) {
-  const hobbyId = config.id;
   renderHobbyShell(config);
-  applyTheme();
-  bindThemeButton();
+  bindGlobalHeader();
 
-  let editingItemId = null;
-
+  const hobbyId = config.id;
   const hobbyItems = () => state.items.filter(x => x.hobbyId === hobbyId);
-  const activeItems = () => hobbyItems().filter(x => !x.archived);
+  const visibleItems = () => hobbyItems().filter(x => !x.archived);
+  const activeItems = () => visibleItems().filter(x => x.status !== "done");
   const hobbyMilestones = () => state.milestones.filter(x => x.hobbyId === hobbyId);
   const hobbyCuriosities = () => state.curiosities.filter(x => x.hobbyId === hobbyId);
   const hobbyActivity = () => state.activity.filter(x => x.hobbyId === hobbyId);
 
   function renderSummary() {
-    $("#summaryActive").textContent = activeItems().filter(x => x.status === "active").length;
-    $("#summaryDone").textContent = activeItems().filter(x => x.status === "done").length;
+    const items = visibleItems();
+    $("#summaryActive").textContent = items.filter(x => x.status === "active").length;
+    $("#summaryDone").textContent = items.filter(x => x.status === "done").length;
     $("#summaryTrophies").textContent = hobbyMilestones().filter(x => x.status === "achieved").length;
-    const mins = hobbyActivity().reduce((sum, x) => sum + Number(x.minutes || 0), 0);
-    $("#summaryTime").textContent = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+    $("#summaryTime").textContent = minutesLabel(hobbyActivity().reduce((sum, x) => sum + Number(x.minutes || 0), 0));
+  }
+
+  function renderFocus() {
+    const focus = visibleItems().filter(x => x.isFocus).slice(0, 2);
+    const target = $("#focusList");
+    if (!focus.length) {
+      target.innerHTML = `<div class="empty-state compact-empty">Nothing pinned. Use “Pin” on an item when I want it kept in view.</div>`;
+      return;
+    }
+    target.innerHTML = focus.map(item => `<article class="focus-card">
+      <div class="row-labels"><span class="type-tag">${itemKindLabel(item.kind)}</span><span class="status">${itemStatusLabel(item.status)}</span></div>
+      <div class="focus-title">${escapeHTML(item.title)}</div>
+      ${item.nextAction ? `<div class="focus-next">Next: ${escapeHTML(item.nextAction)}</div>` : ""}
+      <div class="row-meta">Last touched ${formatDate(item.touchedAt)}</div>
+      <div class="focus-actions"><button class="mini-button" data-log-item="${item.id}">Log activity</button><button class="text-button" data-focus-item="${item.id}">Unpin</button></div>
+    </article>`).join("");
+    bindItemActionButtons();
   }
 
   function renderActivity() {
-    const entries = [...hobbyActivity()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const entries = hobbyActivity().sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
     buildHeatmap($("#hobbyHeatmap"), entries);
-    const total = entries.reduce((sum, x) => sum + Number(x.minutes || 0), 0);
-    const activeDays = new Set(entries.map(x => x.date)).size;
-    $("#activityCaption").textContent = `${activeDays} active days · ${total} minutes logged`;
-
+    const minutes = entries.reduce((sum, x) => sum + Number(x.minutes || 0), 0);
+    $("#activityCaption").textContent = entries.length ? `${entries.length} sessions · ${minutesLabel(minutes)} logged` : "No activity logged yet.";
     const target = $("#activityList");
-    if (!entries.length) {
-      target.innerHTML = `<div class="empty-state">No activity logged yet.</div>`;
-      return;
-    }
-    target.innerHTML = entries.slice(0, 6).map(entry => `<div class="simple-row"><span>${escapeHTML(entry.note || "Practice session")}</span><span class="muted">${entry.minutes} min · ${formatDate(entry.date)}</span></div>`).join("");
+    target.innerHTML = entries.slice(0, 5).map(entry => {
+      const item = state.items.find(x => x.id === entry.itemId);
+      return `<div class="simple-row"><span>${escapeHTML(entry.note || item?.title || "Practice session")}</span><span class="muted">${entry.minutes} min · ${formatDate(entry.date)}</span></div>`;
+    }).join("") || `<div class="empty-state compact-empty">No recent sessions.</div>`;
   }
 
-  function renderItems() {
+  function itemMatchesFilters(item) {
     const query = $("#itemSearch").value.trim().toLowerCase();
     const status = $("#itemStatus").value;
     const kind = $("#itemKind").value;
-    const order = { active: 0, planned: 1, paused: 2, done: 3 };
+    const haystack = [item.title, item.notes, item.nextAction, ...(item.tags || [])].join(" ").toLowerCase();
+    return (!query || haystack.includes(query)) && (status === "all" || item.status === status) && (kind === "all" || item.kind === kind);
+  }
 
-    const items = activeItems().filter(item => {
-      const haystack = [item.title, item.notes, item.nextAction, ...(item.tags || [])].join(" ").toLowerCase();
-      return (!query || haystack.includes(query)) &&
-        (status === "all" || item.status === status) &&
-        (kind === "all" || item.kind === kind);
-    }).sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
-
+  function renderItems() {
+    const items = visibleItems().filter(itemMatchesFilters).sort((a, b) => {
+      if (a.isFocus !== b.isFocus) return a.isFocus ? -1 : 1;
+      return String(b.touchedAt).localeCompare(String(a.touchedAt));
+    });
     const target = $("#itemList");
     if (!items.length) {
-      target.innerHTML = `<div class="empty-state">Nothing here yet.</div>`;
+      target.innerHTML = `<div class="empty-state">No matching items.</div>`;
       return;
     }
 
     target.innerHTML = items.map(item => {
-      const isProject = item.kind === "project";
-      const resources = Array.isArray(item.resources) ? item.resources : [];
+      const resources = item.kind === "project" ? (item.resources || []) : [];
       return `<article class="item-row">
         <div class="item-top">
           <div class="row-main">
-            <div class="row-labels"><span class="type-tag">${isProject ? "Project" : "Learning"}</span><span class="status">${escapeHTML(item.status)}</span></div>
+            <div class="row-labels">${item.isFocus ? `<span class="focus-badge">Focus</span>` : ""}<span class="type-tag">${itemKindLabel(item.kind)}</span><span class="status">${itemStatusLabel(item.status)}</span></div>
             <div class="row-title item-title">${escapeHTML(item.title)}</div>
+            <div class="row-meta">Last touched ${formatDate(item.touchedAt)}${item.tags.length ? ` · ${item.tags.map(tag => escapeHTML(tag)).join(" · ")}` : ""}</div>
             ${item.notes ? `<p class="row-note">${escapeHTML(item.notes)}</p>` : ""}
             ${item.nextAction ? `<p class="row-next"><strong>Next:</strong> ${escapeHTML(item.nextAction)}</p>` : ""}
-            ${(item.tags || []).length ? `<div class="tag-row">${item.tags.map(tag => `<span class="tag">#${escapeHTML(tag)}</span>`).join("")}</div>` : ""}
+            ${Number(item.progress) > 0 ? `<div class="progress-line" title="${item.progress}%"><span style="width:${item.progress}%"></span></div>` : ""}
           </div>
           <div class="row-actions">
             <button class="mini-button" data-log-item="${item.id}">Log</button>
-            ${isProject ? `<button class="mini-button" data-add-resource="${item.id}">Add resource</button>` : ""}
+            <button class="mini-button" data-focus-item="${item.id}">${item.isFocus ? "Unpin" : "Pin"}</button>
+            ${item.kind === "project" ? `<button class="mini-button" data-add-resource="${item.id}">Resource</button>` : ""}
             <button class="mini-button" data-edit-item="${item.id}">Edit</button>
-            <button class="mini-button" data-archive-item="${item.id}">Archive</button>
+            <button class="text-button" data-archive-item="${item.id}">Archive</button>
           </div>
         </div>
-        <div class="row-meta">${Number(item.progress || 0)}% complete</div>
-        <div class="progress-line"><span style="width:${Math.min(100, Math.max(0, Number(item.progress || 0)))}%"></span></div>
-        ${isProject ? `<div class="resource-shelf">
-          <div class="resource-heading"><h4>Resources</h4><span class="muted">${resources.length}</span></div>
-          ${resources.length ? resources.map(resource => `<div class="resource-row">
-            <div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a><small>${escapeHTML(resource.type || "Resource")}${resource.note ? ` · ${escapeHTML(resource.note)}` : ""}</small></div>
-            <button class="mini-button danger" data-delete-resource="${resource.id}" data-item-id="${item.id}">Remove</button>
-          </div>`).join("") : `<div class="empty-state compact-empty">No resources saved for this project.</div>`}
+        ${item.kind === "project" ? `<div class="resource-shelf">
+          <div class="resource-heading"><h4>Resources</h4></div>
+          ${resources.length ? resources.map(resource => `<div class="resource-row"><div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div><button class="text-button" data-delete-resource="${resource.id}">Remove</button></div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
         </div>` : ""}
       </article>`;
     }).join("");
 
-    $$('[data-log-item]').forEach(button => button.addEventListener("click", () => openActivity(button.dataset.logItem)));
+    bindItemActionButtons();
     $$('[data-edit-item]').forEach(button => button.addEventListener("click", () => openItem(state.items.find(x => x.id === button.dataset.editItem))));
-    $$('[data-archive-item]').forEach(button => button.addEventListener("click", () => {
-      const item = state.items.find(x => x.id === button.dataset.archiveItem);
-      if (item) { item.archived = true; saveState(); refresh(); }
-    }));
     $$('[data-add-resource]').forEach(button => button.addEventListener("click", () => openResource(button.dataset.addResource)));
-    $$('[data-delete-resource]').forEach(button => button.addEventListener("click", () => {
-      const item = state.items.find(x => x.id === button.dataset.itemId);
-      if (item) {
-        item.resources = (item.resources || []).filter(x => x.id !== button.dataset.deleteResource);
-        saveState(); renderItems();
-      }
+    $$('[data-archive-item]').forEach(button => button.addEventListener("click", async () => {
+      await runWrite(() => db.from("items").update({ archived: true, is_focus: false }).eq("id", button.dataset.archiveItem));
+      await reloadState(); refresh();
+    }));
+    $$('[data-delete-resource]').forEach(button => button.addEventListener("click", async () => {
+      const resource = state.resources.find(x => x.id === button.dataset.deleteResource);
+      await runWrite(() => db.from("resources").delete().eq("id", button.dataset.deleteResource));
+      if (resource?.itemId) await db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", resource.itemId);
+      await reloadState(); refresh();
     }));
   }
 
-  function renderMilestones() {
+  function bindItemActionButtons() {
+    $$('[data-log-item]').forEach(button => {
+      if (button.dataset.bound) return;
+      button.dataset.bound = "1";
+      button.addEventListener("click", () => openActivity(button.dataset.logItem));
+    });
+    $$('[data-focus-item]').forEach(button => {
+      if (button.dataset.bound) return;
+      button.dataset.bound = "1";
+      button.addEventListener("click", async () => {
+        const item = state.items.find(x => x.id === button.dataset.focusItem);
+        if (!item) return;
+        const focusCount = visibleItems().filter(x => x.isFocus).length;
+        if (!item.isFocus && focusCount >= 2) {
+          alert("Current focus is intentionally limited to two items. Unpin one first.");
+          return;
+        }
+        await runWrite(() => db.from("items").update({ is_focus: !item.isFocus }).eq("id", item.id));
+        await reloadState(); refresh();
+      });
+    });
+  }
+
+  async function renderMilestones() {
     const milestones = hobbyMilestones();
-    const working = milestones.filter(x => x.status !== "achieved");
-    const achieved = milestones.filter(x => x.status === "achieved")
-      .sort((a, b) => String(b.achievedDate || "").localeCompare(String(a.achievedDate || "")));
+    const working = milestones.filter(x => x.status === "working");
+    const achieved = milestones.filter(x => x.status === "achieved").sort((a, b) => String(b.achievedDate).localeCompare(String(a.achievedDate)));
     const target = $("#milestoneList");
-
-    const workingHTML = working.length ? working.map(milestone => `<article class="milestone-row">
-      <div class="milestone-top">
-        <div class="row-main">
-          <div class="row-title">${escapeHTML(milestone.title)}</div>
-          <div class="row-meta">${escapeHTML(milestone.type || "custom")}${milestone.targetDate ? ` · target ${formatDate(milestone.targetDate)}` : ""}</div>
-          ${milestone.note ? `<p class="row-note">${escapeHTML(milestone.note)}</p>` : ""}
-        </div>
-        <div class="row-actions">
-          <button class="mini-button" data-achieve-milestone="${milestone.id}">Mark achieved</button>
-          <button class="mini-button danger" data-delete-milestone="${milestone.id}">Delete</button>
-        </div>
-      </div>
-    </article>`).join("") : `<div class="empty-state compact-empty">Nothing in progress.</div>`;
-
-    const trophyHTML = achieved.length ? achieved.map(milestone => `<article class="trophy-card">
-      <div class="trophy-mark" aria-hidden="true">🏆</div>
-      <div class="trophy-title">${escapeHTML(milestone.title)}</div>
-      <div class="row-meta">${escapeHTML(milestone.type || "custom")}${milestone.achievedDate ? ` · ${formatDate(milestone.achievedDate)}` : ""}</div>
-      ${milestone.note ? `<p class="row-note">${escapeHTML(milestone.note)}</p>` : ""}
-      <div class="trophy-actions">
-        <button class="mini-button" data-reopen-milestone="${milestone.id}">Move back</button>
-        <button class="mini-button danger" data-delete-milestone="${milestone.id}">Delete</button>
-      </div>
-    </article>`).join("") : `<div class="empty-state trophy-empty">Completed milestones will appear here.</div>`;
-
     target.innerHTML = `<div class="milestone-groups">
-      <div class="milestone-working">
+      <div>
         <div class="subsection-heading"><h3>Working toward</h3><span class="muted">${working.length}</span></div>
-        <div class="milestone-list">${workingHTML}</div>
+        <div class="milestone-list">${working.length ? working.map(m => `<article class="milestone-row"><div class="milestone-top"><div class="row-main"><div class="row-title">${escapeHTML(m.title)}</div><div class="row-meta">${escapeHTML(m.type)}${m.targetDate ? ` · target ${formatDate(m.targetDate)}` : ""}</div>${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}</div><div class="row-actions"><button class="mini-button" data-achieve-milestone="${m.id}">Mark achieved</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div></div></article>`).join("") : `<div class="empty-state compact-empty">No milestones in progress.</div>`}</div>
       </div>
       <div class="trophy-section">
         <div class="subsection-heading"><h3>Trophy case</h3><span class="muted">${achieved.length}</span></div>
-        <div class="trophy-grid">${trophyHTML}</div>
+        <div class="trophy-grid">${achieved.length ? achieved.map(m => `<article class="trophy-card">
+          ${m.imagePath ? `<div class="trophy-image-wrap"><div class="trophy-image-placeholder" data-trophy-image="${escapeHTML(m.imagePath)}"></div></div>` : `<div class="trophy-mark">◇</div>`}
+          <div class="trophy-title">${escapeHTML(m.title)}</div>
+          <div class="row-meta">${formatDate(m.achievedDate)} · ${escapeHTML(m.type)}</div>
+          ${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}
+          <div class="trophy-actions"><button class="mini-button" data-trophy-image-button="${m.id}">${m.imagePath ? "Replace image" : "Add image"}</button><button class="text-button" data-reopen-milestone="${m.id}">Move back</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>
+        </article>`).join("") : `<div class="empty-state trophy-empty">Nothing here yet. Achieved milestones will collect here over time.</div>`}</div>
       </div>
     </div>`;
 
-    $$('[data-achieve-milestone]').forEach(button => button.addEventListener("click", () => {
-      const milestone = state.milestones.find(x => x.id === button.dataset.achieveMilestone);
-      if (milestone) {
-        milestone.status = "achieved";
-        milestone.achievedDate = todayISO();
-        saveState(); refresh();
-      }
+    $$('[data-achieve-milestone]').forEach(button => button.addEventListener("click", async () => {
+      await runWrite(() => db.from("milestones").update({ status: "achieved", achieved_date: todayISO() }).eq("id", button.dataset.achieveMilestone));
+      await reloadState(); refresh();
     }));
-    $$('[data-reopen-milestone]').forEach(button => button.addEventListener("click", () => {
-      const milestone = state.milestones.find(x => x.id === button.dataset.reopenMilestone);
-      if (milestone) {
-        milestone.status = "working";
-        milestone.achievedDate = "";
-        saveState(); refresh();
-      }
+    $$('[data-reopen-milestone]').forEach(button => button.addEventListener("click", async () => {
+      await runWrite(() => db.from("milestones").update({ status: "working", achieved_date: null }).eq("id", button.dataset.reopenMilestone));
+      await reloadState(); refresh();
     }));
-    $$('[data-delete-milestone]').forEach(button => button.addEventListener("click", () => {
-      state.milestones = state.milestones.filter(x => x.id !== button.dataset.deleteMilestone);
-      saveState(); refresh();
+    $$('[data-delete-milestone]').forEach(button => button.addEventListener("click", async () => {
+      const milestone = state.milestones.find(x => x.id === button.dataset.deleteMilestone);
+      if (!confirm("Delete this milestone?")) return;
+      if (milestone?.imagePath) await deleteMilestoneImage(milestone.imagePath);
+      await runWrite(() => db.from("milestones").delete().eq("id", button.dataset.deleteMilestone));
+      await reloadState(); refresh();
     }));
+    $$('[data-trophy-image-button]').forEach(button => button.addEventListener("click", () => {
+      const form = $("#trophyImageForm");
+      form.reset();
+      form.elements.milestoneId.value = button.dataset.trophyImageButton;
+      $("#trophyImageDialog").showModal();
+    }));
+
+    for (const placeholder of $$('[data-trophy-image]')) {
+      const url = await getSignedImageUrl(placeholder.dataset.trophyImage);
+      if (url) placeholder.innerHTML = `<img src="${escapeHTML(url)}" alt="Milestone image" loading="lazy" />`;
+    }
   }
 
   function renderCuriosity() {
@@ -586,34 +829,86 @@ function initHobbyPage(config) {
       target.innerHTML = `<div class="empty-state">Nothing waiting here.</div>`;
       return;
     }
-    target.innerHTML = curiosities.map(item => `<article class="curiosity-row">
-      <div class="curiosity-top">
-        <div class="row-main">
-          <div class="row-title">${escapeHTML(item.title)}</div>
-          ${item.note ? `<p class="row-note">${escapeHTML(item.note)}</p>` : ""}
-          ${item.url ? `<div class="row-meta"><a href="${escapeHTML(item.url)}" target="_blank" rel="noreferrer">Open link ↗</a></div>` : ""}
-        </div>
-        <div class="row-actions">
-          <button class="mini-button" data-promote-curiosity="${item.id}">Move to items</button>
-          <button class="mini-button danger" data-delete-curiosity="${item.id}">Delete</button>
-        </div>
-      </div>
-    </article>`).join("");
+    target.innerHTML = curiosities.map(item => `<article class="curiosity-row"><div class="curiosity-top"><div class="row-main"><div class="row-title">${escapeHTML(item.title)}</div>${item.note ? `<p class="row-note">${escapeHTML(item.note)}</p>` : ""}${item.url ? `<div class="row-meta"><a href="${escapeHTML(item.url)}" target="_blank" rel="noreferrer">Open link ↗</a></div>` : ""}</div><div class="row-actions"><button class="mini-button" data-promote-curiosity="${item.id}">Move to items</button><button class="text-button danger" data-delete-curiosity="${item.id}">Delete</button></div></div></article>`).join("");
 
-    $$('[data-promote-curiosity]').forEach(button => button.addEventListener("click", () => {
+    $$('[data-promote-curiosity]').forEach(button => button.addEventListener("click", async () => {
       const curiosity = state.curiosities.find(x => x.id === button.dataset.promoteCuriosity);
       if (!curiosity) return;
-      state.items.unshift({
-        id: crypto.randomUUID(), hobbyId, kind: "learning", title: curiosity.title, status: "planned", progress: 0,
-        notes: curiosity.note || "", nextAction: "", tags: ["from-curiosity"], resources: [], archived: false
-      });
-      state.curiosities = state.curiosities.filter(x => x.id !== curiosity.id);
-      saveState(); refresh();
+      await runWrite(() => db.from("items").insert({
+        hobby_id: hobbyId,
+        title: curiosity.title,
+        kind: "learning",
+        status: "planned",
+        progress: 0,
+        notes: curiosity.note || "",
+        next_action: "",
+        tags: ["from-curiosity"]
+      }));
+      await runWrite(() => db.from("curiosities").delete().eq("id", curiosity.id));
+      await reloadState(); refresh();
     }));
-    $$('[data-delete-curiosity]').forEach(button => button.addEventListener("click", () => {
-      state.curiosities = state.curiosities.filter(x => x.id !== button.dataset.deleteCuriosity);
-      saveState(); refresh();
+    $$('[data-delete-curiosity]').forEach(button => button.addEventListener("click", async () => {
+      await runWrite(() => db.from("curiosities").delete().eq("id", button.dataset.deleteCuriosity));
+      await reloadState(); refresh();
     }));
+  }
+
+  function buildHistoryEvents() {
+    const events = [];
+    hobbyItems().filter(item => item.completedAt).forEach(item => events.push({
+      date: item.completedAt.slice(0, 10),
+      type: "completed",
+      title: `Completed ${itemKindLabel(item.kind).toLowerCase()}: ${item.title}`,
+      detail: item.nextAction ? "" : ""
+    }));
+    hobbyMilestones().filter(m => m.status === "achieved" && m.achievedDate).forEach(m => events.push({
+      date: m.achievedDate,
+      type: "milestone",
+      title: `Milestone: ${m.title}`,
+      detail: m.note || ""
+    }));
+
+    const projectMonthMap = new Map();
+    hobbyActivity().forEach(entry => {
+      const item = state.items.find(x => x.id === entry.itemId && x.kind === "project");
+      if (!item) return;
+      const key = `${entry.date.slice(0, 7)}|${item.id}`;
+      const existing = projectMonthMap.get(key) || { date: entry.date, item, minutes: 0 };
+      existing.minutes += Number(entry.minutes || 0);
+      if (entry.date > existing.date) existing.date = entry.date;
+      projectMonthMap.set(key, existing);
+    });
+    projectMonthMap.forEach(value => events.push({
+      date: value.date,
+      type: "worked",
+      title: `Worked on: ${value.item.title}`,
+      detail: minutesLabel(value.minutes)
+    }));
+
+    return events.sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  function renderHistory() {
+    const events = buildHistoryEvents();
+    const target = $("#historyList");
+    if (!events.length) {
+      target.innerHTML = `<div class="empty-state">History will build itself from completed items, milestones, and project activity.</div>`;
+      return;
+    }
+    const years = new Map();
+    events.forEach(event => {
+      const year = event.date.slice(0, 4);
+      const month = Number(event.date.slice(5, 7)) - 1;
+      if (!years.has(year)) years.set(year, new Map());
+      if (!years.get(year).has(month)) years.get(year).set(month, []);
+      years.get(year).get(month).push(event);
+    });
+
+    const currentYear = String(new Date().getFullYear());
+    target.innerHTML = [...years.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([year, months]) => `<details class="history-year" ${year === currentYear ? "open" : ""}>
+      <summary>${year}</summary>
+      <div class="history-months">${[...months.entries()].sort((a, b) => b[0] - a[0]).map(([month, monthEvents]) => `<section class="history-month"><h3>${monthName(month)}</h3><div class="history-events">${monthEvents.map(event => `<div class="history-event"><span class="history-dot"></span><div><div>${escapeHTML(event.title)}</div><div class="row-meta">${formatDate(event.date, false)}${event.detail ? ` · ${escapeHTML(event.detail)}` : ""}</div></div></div>`).join("")}</div></section>`).join("")}</div>
+    </details>`).join("");
   }
 
   function renderArchive() {
@@ -623,20 +918,16 @@ function initHobbyPage(config) {
       target.innerHTML = `<div class="empty-state">Archive is empty.</div>`;
       return;
     }
-    target.innerHTML = archived.map(item => `<article class="archive-row">
-      <div class="archive-top"><div><div class="row-title">${escapeHTML(item.title)}</div><div class="row-meta">${item.kind === "project" ? "Project" : "Learning"} · ${escapeHTML(item.status)}</div></div>
-      <div class="row-actions"><button class="mini-button" data-restore-item="${item.id}">Restore</button><button class="mini-button danger" data-delete-item="${item.id}">Delete permanently</button></div></div>
-    </article>`).join("");
+    target.innerHTML = archived.map(item => `<article class="archive-row"><div class="archive-top"><div><div class="row-title">${escapeHTML(item.title)}</div><div class="row-meta">${itemKindLabel(item.kind)} · ${itemStatusLabel(item.status)} · last touched ${formatDate(item.touchedAt)}</div></div><div class="row-actions"><button class="mini-button" data-restore-item="${item.id}">Restore</button><button class="text-button danger" data-delete-item="${item.id}">Delete permanently</button></div></div></article>`).join("");
 
-    $$('[data-restore-item]').forEach(button => button.addEventListener("click", () => {
-      const item = state.items.find(x => x.id === button.dataset.restoreItem);
-      if (item) { item.archived = false; saveState(); refresh(); }
+    $$('[data-restore-item]').forEach(button => button.addEventListener("click", async () => {
+      await runWrite(() => db.from("items").update({ archived: false }).eq("id", button.dataset.restoreItem));
+      await reloadState(); refresh();
     }));
-    $$('[data-delete-item]').forEach(button => button.addEventListener("click", () => {
-      if (confirm("Permanently delete this item?")) {
-        state.items = state.items.filter(x => x.id !== button.dataset.deleteItem);
-        saveState(); refresh();
-      }
+    $$('[data-delete-item]').forEach(button => button.addEventListener("click", async () => {
+      if (!confirm("Permanently delete this item and its resources?")) return;
+      await runWrite(() => db.from("items").delete().eq("id", button.dataset.deleteItem));
+      await reloadState(); refresh();
     }));
   }
 
@@ -685,23 +976,36 @@ function initHobbyPage(config) {
 
   function refresh() {
     renderSummary();
+    renderFocus();
     renderActivity();
     renderItems();
     renderMilestones();
     renderCuriosity();
+    renderHistory();
     renderArchive();
   }
 
   $("#hobbyNotes").value = state.hobbyNotes[hobbyId] || "";
   let noteTimer;
   $("#hobbyNotes").addEventListener("input", event => {
-    state.hobbyNotes[hobbyId] = event.target.value;
     clearTimeout(noteTimer);
     $("#notesSaved").textContent = "Saving…";
-    noteTimer = setTimeout(() => {
-      saveState();
-      $("#notesSaved").textContent = "Saved automatically in this browser.";
-    }, 300);
+    const content = event.target.value;
+    noteTimer = setTimeout(async () => {
+      const { error } = await db.from("hobby_notes").upsert({
+        user_id: currentUser.id,
+        hobby_id: hobbyId,
+        content,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "user_id,hobby_id" });
+      if (error) {
+        $("#notesSaved").textContent = "Could not save.";
+        console.error(error);
+      } else {
+        state.hobbyNotes[hobbyId] = content;
+        $("#notesSaved").textContent = "Saved to Supabase.";
+      }
+    }, 700);
   });
 
   $("#itemSearch").addEventListener("input", renderItems);
@@ -712,81 +1016,185 @@ function initHobbyPage(config) {
   $("#logActivityButton").addEventListener("click", () => openActivity());
   $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
   $("#addCuriosityButton").addEventListener("click", () => $("#curiosityDialog").showModal());
-
   $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
 
-  $("#itemForm").addEventListener("submit", event => {
+  $("#itemForm").addEventListener("submit", async event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const old = state.items.find(x => x.id === editingItemId);
-    const entry = {
-      id: editingItemId || crypto.randomUUID(), hobbyId,
-      title: String(data.get("title")).trim(), kind: String(data.get("kind")), status: String(data.get("status")),
+    const status = String(data.get("status"));
+    const now = new Date().toISOString();
+    const payload = {
+      hobby_id: hobbyId,
+      title: String(data.get("title")).trim(),
+      kind: String(data.get("kind")),
+      status,
       progress: Math.min(100, Math.max(0, Number(data.get("progress")) || 0)),
       tags: String(data.get("tags") || "").split(",").map(x => x.trim()).filter(Boolean),
-      notes: String(data.get("notes") || "").trim(), nextAction: String(data.get("nextAction") || "").trim(),
-      resources: old?.resources || [], archived: old?.archived || false
+      notes: String(data.get("notes") || "").trim(),
+      next_action: String(data.get("nextAction") || "").trim(),
+      touched_at: now,
+      completed_at: status === "done" ? (old?.completedAt || now) : null,
+      is_focus: status === "done" ? false : Boolean(old?.isFocus)
     };
-    state.items = editingItemId ? state.items.map(x => x.id === editingItemId ? entry : x) : [entry, ...state.items];
-    saveState(); $("#itemDialog").close(); refresh();
-  });
-
-  $("#activityForm").addEventListener("submit", event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    state.activity.push({
-      id: crypto.randomUUID(), hobbyId, date: String(data.get("date")), minutes: Number(data.get("minutes")) || 0,
-      itemId: String(data.get("itemId") || ""), note: String(data.get("note") || "").trim()
-    });
-    saveState(); $("#activityDialog").close(); refresh();
-  });
-
-  $("#resourceForm").addEventListener("submit", event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const item = state.items.find(x => x.id === data.get("itemId"));
-    if (item) {
-      item.resources = item.resources || [];
-      item.resources.push({
-        id: crypto.randomUUID(), label: String(data.get("label")).trim(), type: String(data.get("type") || "").trim(),
-        url: String(data.get("url")).trim(), note: String(data.get("note") || "").trim()
-      });
-      saveState();
+    if (editingItemId) {
+      await runWrite(() => db.from("items").update(payload).eq("id", editingItemId));
+    } else {
+      await runWrite(() => db.from("items").insert(payload));
     }
-    $("#resourceDialog").close(); renderItems();
+    await reloadState();
+    $("#itemDialog").close();
+    refresh();
   });
 
-  $("#milestoneForm").addEventListener("submit", event => {
+  $("#activityForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const itemId = String(data.get("itemId") || "") || null;
+    await runWrite(() => db.from("activity").insert({
+      hobby_id: hobbyId,
+      activity_date: String(data.get("date")),
+      minutes: Number(data.get("minutes")) || 0,
+      item_id: itemId,
+      note: String(data.get("note") || "").trim()
+    }));
+    if (itemId) {
+      await runWrite(() => db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId));
+    }
+    await reloadState();
+    $("#activityDialog").close();
+    refresh();
+  });
+
+  $("#resourceForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const itemId = String(data.get("itemId"));
+    await runWrite(() => db.from("resources").insert({
+      item_id: itemId,
+      label: String(data.get("label")).trim(),
+      type: String(data.get("type") || "").trim(),
+      url: String(data.get("url")).trim(),
+      note: String(data.get("note") || "").trim()
+    }));
+    await db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId);
+    await reloadState();
+    $("#resourceDialog").close();
+    refresh();
+  });
+
+  $("#milestoneForm").addEventListener("submit", async event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const status = String(data.get("status"));
     const date = String(data.get("date") || "");
-    state.milestones.unshift({
-      id: crypto.randomUUID(), hobbyId, title: String(data.get("title")).trim(), type: String(data.get("type")),
-      status, targetDate: status === "working" ? date : "", achievedDate: status === "achieved" ? (date || todayISO()) : "",
-      note: String(data.get("note") || "").trim()
-    });
-    saveState(); event.currentTarget.reset(); $("#milestoneDialog").close(); refresh();
+    const file = data.get("image");
+    let imagePath = "";
+    try {
+      if (file instanceof File && file.size) imagePath = await uploadMilestoneImage(file, hobbyId);
+      const result = await db.from("milestones").insert({
+        hobby_id: hobbyId,
+        title: String(data.get("title")).trim(),
+        type: String(data.get("type")),
+        status,
+        target_date: status === "working" && date ? date : null,
+        achieved_date: status === "achieved" ? (date || todayISO()) : null,
+        note: String(data.get("note") || "").trim(),
+        image_path: imagePath || null
+      });
+      if (result.error) throw result.error;
+    } catch (error) {
+      if (imagePath) await deleteMilestoneImage(imagePath);
+      showDataError(error);
+      return;
+    }
+    await reloadState();
+    event.currentTarget.reset();
+    $("#milestoneDialog").close();
+    refresh();
   });
 
-  $("#curiosityForm").addEventListener("submit", event => {
+  $("#trophyImageForm").addEventListener("submit", async event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    state.curiosities.unshift({
-      id: crypto.randomUUID(), hobbyId, title: String(data.get("title")).trim(), url: String(data.get("url") || "").trim(), note: String(data.get("note") || "").trim()
-    });
-    saveState(); event.currentTarget.reset(); $("#curiosityDialog").close(); refresh();
+    const milestone = state.milestones.find(x => x.id === String(data.get("milestoneId")));
+    const file = data.get("image");
+    if (!milestone || !(file instanceof File) || !file.size) return;
+    let newPath = "";
+    try {
+      newPath = await uploadMilestoneImage(file, hobbyId);
+      const { error } = await db.from("milestones").update({ image_path: newPath }).eq("id", milestone.id);
+      if (error) throw error;
+      if (milestone.imagePath) await deleteMilestoneImage(milestone.imagePath);
+    } catch (error) {
+      if (newPath) await deleteMilestoneImage(newPath);
+      showDataError(error);
+      return;
+    }
+    await reloadState();
+    $("#trophyImageDialog").close();
+    refresh();
+  });
+
+  $("#curiosityForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    await runWrite(() => db.from("curiosities").insert({
+      hobby_id: hobbyId,
+      title: String(data.get("title")).trim(),
+      url: String(data.get("url") || "").trim(),
+      note: String(data.get("note") || "").trim()
+    }));
+    await reloadState();
+    event.currentTarget.reset();
+    $("#curiosityDialog").close();
+    refresh();
   });
 
   refresh();
 }
 
-applyTheme();
+async function enterAuthenticatedApp() {
+  const { data, error } = await db.auth.getSession();
+  if (error || !data.session) {
+    renderAuth(error?.message || "Please sign in.");
+    return;
+  }
+  currentUser = data.session.user;
+  $("#app").innerHTML = `<div class="app-loading">Loading journal…</div>`;
+  try {
+    await loadState();
+  } catch (error) {
+    console.error(error);
+    renderSetupRequired(`Supabase is connected, but the journal tables could not be loaded: ${error.message}`);
+    return;
+  }
 
-if (document.body.dataset.page === "home") {
-  bindThemeButton();
-  bindBackupControls();
-  renderHome();
-} else if (window.HOBBY_PAGE) {
-  initHobbyPage(window.HOBBY_PAGE);
+  if (document.body.dataset.page === "home") renderHome();
+  else if (window.HOBBY_PAGE) initHobbyPage(window.HOBBY_PAGE);
 }
+
+async function boot() {
+  initialTheme();
+  if (!window.supabase) {
+    renderSetupRequired("The Supabase JavaScript library did not load. Check the internet connection or CDN script.");
+    return;
+  }
+  if (!isConfigured()) {
+    renderSetupRequired();
+    return;
+  }
+  db = createDatabaseClient();
+  const { data, error } = await db.auth.getSession();
+  if (error) {
+    renderAuth(error.message);
+    return;
+  }
+  if (!data.session) {
+    renderAuth();
+    return;
+  }
+  await enterAuthenticatedApp();
+}
+
+boot();

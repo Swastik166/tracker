@@ -1,6 +1,6 @@
 # Adding a new hobby
 
-The site is intentionally set up so a new hobby needs only two small repository changes.
+A hobby is still repository-defined. Adding one needs only two small edits; no Supabase table or SQL change is required.
 
 ## 1. Copy the template
 
@@ -8,11 +8,11 @@ Duplicate:
 
 `hobbies/_template.html`
 
-Rename the copy, for example:
+Rename it, for example:
 
 `hobbies/woodworking.html`
 
-Near the bottom of that file, change only this block:
+Near the bottom, change only:
 
 ```js
 window.HOBBY_PAGE = {
@@ -22,11 +22,11 @@ window.HOBBY_PAGE = {
 };
 ```
 
-The `id` should be lowercase and use hyphens instead of spaces.
+Keep the `id` lowercase and use hyphens instead of spaces.
 
-## 2. Add it to the home page list
+## 2. Add the hobby to the home-page list
 
-Open `hobbies.js` and add one object:
+Open `hobbies.js` and add:
 
 ```js
 {
@@ -37,10 +37,10 @@ Open `hobbies.js` and add one object:
 }
 ```
 
-Commit and push those two changes. GitHub Pages will publish the new hobby page automatically.
+Commit and push. GitHub Pages publishes the new page. Once the page exists, entries made on it are automatically stored in the same Supabase database under `hobby_id = woodworking`.
 
-## Removing a starter hobby
+## Removing a hobby
 
-Delete its HTML file from `hobbies/` and remove its object from `hobbies.js`.
+Delete its HTML file and remove its entry from `hobbies.js`.
 
-Deleting a page does not automatically erase data that was previously saved in the browser for that hobby ID.
+Database records for that hobby are intentionally not automatically deleted. This prevents accidental data loss. If you later recreate a hobby with the same ID, its old records become visible again.
