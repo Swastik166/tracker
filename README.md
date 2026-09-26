@@ -1,6 +1,6 @@
 # Tracking hobbies — v8
 
-personal hobby journal hosted on GitHub Pages and backed by Supabase.
+A quiet personal hobby journal hosted on GitHub Pages and backed by Supabase.
 
 ## Public view
 
@@ -76,3 +76,9 @@ For a brand-new Supabase project, use only the current `supabase-setup.sql`.
 - `supabase-setup.sql` — complete schema for a fresh database
 - `supabase-v7-migration.sql` — adds hobby-level resources to a v6 database
 - `supabase-v8-migration.sql` — makes Curiosity global for a v7 database
+
+## v8.1 fixes
+
+- Curiosity Inbox entries can be saved without assigning a hobby. Existing databases must run `supabase-v8.1-migration.sql` once so `curiosities.hobby_id` is nullable.
+- Links no longer require a scheme. `youtube.com`, `www.example.com/page`, and full `https://...` URLs are accepted. The site stores shorthand links as normalized HTTPS URLs.
+- Empty links remain valid for both curiosities and resources.

@@ -30,6 +30,23 @@ function escapeHTML(value = "") {
   })[char]);
 }
 
+function normalizeWebUrl(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  let candidate = raw;
+  if (candidate.startsWith("//")) candidate = `https:${candidate}`;
+  else if (!/^https?:\/\//i.test(candidate)) candidate = `https://${candidate}`;
+
+  try {
+    const parsed = new URL(candidate);
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 function todayISO() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
@@ -444,7 +461,7 @@ function homeDialogMarkup() {
     <div class="dialog-heading"><h2>Add curiosity</h2><button type="button" class="dialog-close" data-close="curiosityDialog">×</button></div>
     <div class="form-grid">
       <label class="full">What caught my attention?<input name="title" required /></label>
-      <label class="full">Link (optional)<input name="url" type="url" placeholder="https://…" /></label>
+      <label class="full">Link (optional)<input name="url" type="text" inputmode="url" autocomplete="url" placeholder="youtube.com or https://…" /></label>
       <label class="full">Note<textarea name="note" placeholder="Why this looked interesting"></textarea></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="curiosityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
@@ -644,10 +661,15 @@ function renderHome() {
     $("#curiosityForm")?.addEventListener("submit", async event => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
+      const curiosityUrl = normalizeWebUrl(data.get("url"));
+      if (curiosityUrl === null) {
+        alert("That link does not look like a valid web address.");
+        return;
+      }
       await runWrite(() => db.from("curiosities").insert({
         hobby_id: null,
         title: String(data.get("title")).trim(),
-        url: String(data.get("url") || "").trim(),
+        url: curiosityUrl,
         note: String(data.get("note") || "").trim()
       }));
       await reloadState();
@@ -732,7 +754,7 @@ function dialogMarkup() {
       <label>Label<input name="label" required /></label>
       <label>Type<input name="type" list="resourceTypeSuggestions" placeholder="Book, video, website…" /></label>
       <datalist id="resourceTypeSuggestions"><option value="Article"></option><option value="Book"></option><option value="Video"></option><option value="Website"></option><option value="Paper"></option><option value="App"></option><option value="Course"></option><option value="Podcast"></option><option value="Reference"></option><option value="Person"></option><option value="Place"></option></datalist>
-      <label class="full">URL (optional)<input name="url" type="url" placeholder="https://…" /></label>
+      <label class="full">URL (optional)<input name="url" type="text" inputmode="url" autocomplete="url" placeholder="youtube.com or https://…" /></label>
       <label class="full">Note<input name="note" placeholder="Why I saved this" /></label>
       <label id="resourceVisibilityField">Visibility<select name="visibility"><option value="public">Public</option><option value="private">Private</option></select></label>
     </div>
@@ -1441,10 +1463,14 @@ function initHobbyPage(config) {
         item_id: itemId,
         label: String(data.get("label")).trim(),
         type: String(data.get("type") || "").trim(),
-        url: String(data.get("url")).trim(),
+        url: normalizeWebUrl(data.get("url")),
         note: String(data.get("note") || "").trim(),
         visibility: itemId ? "public" : String(data.get("visibility") || "public")
       };
+      if (payload.url === null) {
+        alert("That link does not look like a valid web address.");
+        return;
+      }
       if (editingResourceId) {
         await runWrite(() => db.from("resources").update(payload).eq("id", editingResourceId));
       } else {
