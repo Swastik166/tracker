@@ -56,7 +56,7 @@ create table if not exists public.milestones (
 create table if not exists public.curiosities (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  hobby_id text not null,
+  hobby_id text,
   title text not null,
   url text not null default '',
   note text not null default '',

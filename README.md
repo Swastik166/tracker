@@ -1,69 +1,78 @@
-# Tracking hobbies— v6
+# Tracking hobbies — v8
 
-Tracking stuff via GitHub Pages, backed by Supabase.
+personal hobby journal hosted on GitHub Pages and backed by Supabase.
 
-## Two modes
+## Public view
 
-### Public view
-No account is required. Visitors can see:
+Visitors do not need an account. They can see content you have chosen to make public:
 
-- hobby pages listed in `hobbies.js`
-- learning/project items marked **Public**
-- resources attached to public projects
-- hobby-level resources marked **Public**
-- public milestones and the trophy case
+- hobby pages from `hobbies.js`
+- public learning/project items
+- public project and hobby resources
+- public/achieved milestones and the trophy case
 - the activity heatmap (date + minutes only)
-- public history generated from shared completions and milestones
+- public history
+- homepage search across content that is public to them
 
-Cannot be edited.
+Visitors cannot edit anything.
 
-### Owner view
-After signing in will get:
+## Owner view
+
+After signing in you can also use:
 
 - add/edit/archive/delete controls
-- private items
+- private items and resources
 - Current Focus
 - private hobby notes
-- Curiosity Inbox
-- detailed activity notes, with edit/delete controls for logged sessions
-- hobby-level resource library, with public/private visibility
-- archive
-- visibility controls
-- backups
+- editable/deletable activity entries
+- the global Curiosity Inbox on the homepage
+- Recently Touched on the homepage
+- search across both public and private loaded content
+- archive and backups
 
-## Visibility defaults
+## v8 changes
 
-The defaults are:
+### Curiosity is global
 
-- new learning/project items: **Public**
-- milestone visibility: **Auto** — private while working toward it, public after achievement
-- activity: included in the public heatmap by default, but only date + minutes are exposed
-- hobby scratchpad / curiosity / Current Focus / archive: always private
-- project resources inherit the visibility of their parent project
+Curiosity no longer belongs to a hobby when it is captured. The private Curiosity Inbox now lives on the homepage. A curiosity contains only a title, optional link, and optional note.
 
-Change an item's visibility directly from its row. Milestones have an `Auto / Public / Private` selector.
+Use **Move to hobby** to choose a hobby and whether it should become a Learning or Project item. It becomes a Planned item. If it has a saved link, that link is preserved as a hobby-level resource.
 
-## Database
+### Global search
 
-Supabase stores all changing content. GitHub stores only the static website code and the Supabase publishable browser configuration.
+The homepage search finds learning/project items, resources, and milestones across all hobbies. Signed-out visitors only search content Supabase permits them to read; the owner searches the full loaded owner state.
+
+### Recently touched
+
+The owner homepage shows the five most recently touched non-archived items. This is generated from existing `touched_at` data and requires no extra logging.
+
+### Resources
+
+Resource URLs are optional. A resource can now be a book, person, place, app, reference, or anything else even when there is no web link. The Type field stays free-form but offers common suggestions.
+
+### Completed items
+
+`Done` items remain in the normal Learning & Projects list. Archive remains a separate deliberate action.
+
+## Database upgrades
+
+For an existing v7 database, run `supabase-v8-migration.sql` once.
+
+If your database is still on v6, run these in order:
+
+1. `supabase-v7-migration.sql`
+2. `supabase-v8-migration.sql`
+
+For a brand-new Supabase project, use only the current `supabase-setup.sql`.
 
 ## Files
 
-- `index.html` — home page shell
+- `index.html` — homepage shell
 - `styles.css` — shared design
-- `app.js` — public/owner UI and Supabase data operations
-- `config.js` — Supabase browser configuration and a couple of defaults
-- `hobbies.js` — central hobby registry
-- `hobbies/*.html` — one tiny page per hobby
-- `supabase-setup.sql` — database, security policies, and Storage setup
-
-
-## v7 additions
-
-- Logged activity can be edited or deleted from the hobby Activity section.
-- Each hobby has a standalone **Resources** section for links/references that do not belong to a specific project.
-- Hobby-level resources can be **Public** or **Private**.
-- Project resources still stay attached to their project and inherit that project's visibility.
-- Existing project resources are preserved by `supabase-v7-migration.sql`.
-
-If the v6 database is already running, execute `supabase-v7-migration.sql` once in the Supabase SQL Editor before deploying the v7 JavaScript. The full `supabase-setup.sql` is also updated for fresh installs.
+- `app.js` — UI and Supabase operations
+- `config.js` — Supabase browser configuration
+- `hobbies.js` — hobby registry
+- `hobbies/*.html` — one small page per hobby
+- `supabase-setup.sql` — complete schema for a fresh database
+- `supabase-v7-migration.sql` — adds hobby-level resources to a v6 database
+- `supabase-v8-migration.sql` — makes Curiosity global for a v7 database

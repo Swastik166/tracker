@@ -437,9 +437,35 @@ function headerActions() {
   </div>`;
 }
 
+function homeDialogMarkup() {
+  const hobbies = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
+  return `
+  <dialog id="curiosityDialog"><form id="curiosityForm" class="dialog-body">
+    <div class="dialog-heading"><h2>Add curiosity</h2><button type="button" class="dialog-close" data-close="curiosityDialog">×</button></div>
+    <div class="form-grid">
+      <label class="full">What caught my attention?<input name="title" required /></label>
+      <label class="full">Link (optional)<input name="url" type="url" placeholder="https://…" /></label>
+      <label class="full">Note<textarea name="note" placeholder="Why this looked interesting"></textarea></label>
+    </div>
+    <div class="dialog-actions"><button type="button" class="quiet-button" data-close="curiosityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
+  </form></dialog>
+
+  <dialog id="promoteCuriosityDialog"><form id="promoteCuriosityForm" class="dialog-body">
+    <div class="dialog-heading"><h2>Move to a hobby</h2><button type="button" class="dialog-close" data-close="promoteCuriosityDialog">×</button></div>
+    <input name="curiosityId" type="hidden" />
+    <div class="form-grid">
+      <label>Hobby<select name="hobbyId" required>${hobbies.map(hobby => `<option value="${escapeHTML(hobby.id)}">${escapeHTML(hobby.name)}</option>`).join("")}</select></label>
+      <label>Type<select name="kind"><option value="learning">Learning</option><option value="project">Project</option></select></label>
+    </div>
+    <p class="form-note">This creates a planned item. If the curiosity has a link, it is kept as a hobby resource.</p>
+    <div class="dialog-actions"><button type="button" class="quiet-button" data-close="promoteCuriosityDialog">Cancel</button><button class="primary-button" type="submit">Move</button></div>
+  </form></dialog>`;
+}
+
 function renderHome() {
   const allHobbies = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
   const registry = allHobbies;
+  const owner = isOwnerMode();
   document.title = "My Hobbies";
   $("#app").className = "";
   $("#app").innerHTML = `
@@ -464,54 +490,207 @@ function renderHome() {
         <div class="hobby-list">${registry.map(hobby => {
           const items = state.items.filter(x => x.hobbyId === hobby.id && !x.archived);
           const active = items.filter(x => x.status === "active").length;
+          const done = items.filter(x => x.status === "done").length;
           const trophies = state.milestones.filter(x => x.hobbyId === hobby.id && x.status === "achieved").length;
           return `<a class="hobby-link" href="${escapeHTML(hobby.page)}">
             <span>
               <span class="hobby-name">${escapeHTML(hobby.name)}</span>
               <span class="hobby-description">${escapeHTML(hobby.description || "")}</span>
             </span>
-            <span class="hobby-meta"><span>${active} active</span><span>${trophies} trophies</span><span>→</span></span>
+            <span class="hobby-meta"><span>${active} active</span><span>${done} done</span><span>${trophies} trophies</span><span>→</span></span>
           </a>`;
         }).join("")}</div>
       </section>
 
-      <section class="home-grid ${isOwnerMode() ? "" : "public-home-grid"}">
+      <section class="home-search-section" aria-labelledby="searchTitle">
+        <div class="section-line"><h2 id="searchTitle">Search</h2><span class="muted">Across hobbies</span></div>
+        <input id="globalSearch" class="global-search-input" type="search" placeholder="Search items, resources, and milestones…" autocomplete="off" />
+        <div id="globalSearchResults" class="global-search-results" hidden></div>
+      </section>
+
+      <section class="home-grid ${owner ? "" : "public-home-grid"}">
         <div class="plain-panel">
           <div class="section-line">
             <h2>Activity</h2>
             <span id="totalMinutes" class="muted"></span>
           </div>
           <div class="heatmap-wrap"><div id="homeHeatmap" class="heatmap" aria-label="Overall activity heatmap"></div></div>
-          ${isOwnerMode() ? `<div id="recentActivity" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">The heatmap is public; activity notes remain private.</p>`}
+          ${owner ? `<div id="recentActivity" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">The heatmap is public; activity notes remain private.</p>`}
         </div>
 
-        ${isOwnerMode() ? `<div class="plain-panel database-panel">
+        ${owner ? `<div class="plain-panel database-panel">
           <h2>Saved</h2>
           <p class="muted copy-small">Changes are stored in Supabase and available on my other devices after I sign in.</p>
           <div class="database-status"><span class="status-dot"></span><span>${escapeHTML(currentUser.email || "Signed in")}</span></div>
           <button id="exportButton" class="quiet-button" type="button">Download snapshot</button>
         </div>` : ""}
       </section>
+
+      ${owner ? `<section class="home-owner-grid">
+        <div class="plain-panel home-section-panel">
+          <div class="section-line"><h2>Recently touched</h2><span class="muted">Latest 5</span></div>
+          <div id="recentlyTouched" class="simple-list"></div>
+        </div>
+        <div class="plain-panel home-section-panel">
+          <div class="section-line"><div><h2>Curiosity inbox</h2><p class="home-section-copy">Things that look interesting before I decide where they belong.</p></div><button id="addCuriosityButton" class="quiet-button" type="button">Add</button></div>
+          <div id="curiosityList" class="curiosity-list"></div>
+        </div>
+      </section>` : ""}
     </main>
 
-    <footer class="page-width footer"><span>Personal hobby journal</span></footer>`;
+    <footer class="page-width footer"><span>Personal hobby journal</span></footer>
+    ${owner ? homeDialogMarkup() : ""}`;
 
   const activity = [...state.activity].sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
   buildHeatmap($("#homeHeatmap"), activity);
   $("#totalMinutes").textContent = `${minutesLabel(activity.reduce((sum, x) => sum + Number(x.minutes || 0), 0))} logged`;
 
-  if (isOwnerMode()) {
+  function hobbyFor(id) {
+    return allHobbies.find(x => x.id === id);
+  }
+
+  function resultLink(hobbyId, hash = "") {
+    const hobby = hobbyFor(hobbyId);
+    return hobby ? `${hobby.page}${hash}` : "#";
+  }
+
+  function renderGlobalSearch() {
+    const query = ($("#globalSearch")?.value || "").trim().toLowerCase();
+    const target = $("#globalSearchResults");
+    if (!target) return;
+    if (!query) {
+      target.hidden = true;
+      target.innerHTML = "";
+      return;
+    }
+
+    const results = [];
+    state.items.filter(item => !item.archived).forEach(item => {
+      const haystack = [item.title, item.notes, item.nextAction, ...(item.tags || [])].join(" ").toLowerCase();
+      if (haystack.includes(query)) results.push({ hobbyId: item.hobbyId, type: itemKindLabel(item.kind), title: item.title, detail: itemStatusLabel(item.status), href: resultLink(item.hobbyId, `#item-${item.id}`) });
+    });
+    state.resources.forEach(resource => {
+      const haystack = [resource.label, resource.type, resource.note, resource.url].join(" ").toLowerCase();
+      if (!haystack.includes(query)) return;
+      const parent = resource.itemId ? state.items.find(item => item.id === resource.itemId) : null;
+      results.push({ hobbyId: resource.hobbyId || parent?.hobbyId || "", type: "Resource", title: resource.label, detail: resource.type || (parent ? `For ${parent.title}` : "Hobby resource"), href: resultLink(resource.hobbyId || parent?.hobbyId, parent ? `#item-${parent.id}` : "#resources") });
+    });
+    state.milestones.forEach(milestone => {
+      const haystack = [milestone.title, milestone.type, milestone.note].join(" ").toLowerCase();
+      if (haystack.includes(query)) results.push({ hobbyId: milestone.hobbyId, type: "Milestone", title: milestone.title, detail: milestone.status === "achieved" ? "Achieved" : "Working toward", href: resultLink(milestone.hobbyId, "#milestones") });
+    });
+
+    target.hidden = false;
+    target.innerHTML = results.length ? results.slice(0, 12).map(result => {
+      const hobby = hobbyFor(result.hobbyId);
+      return `<a class="search-result-row" href="${escapeHTML(result.href)}"><span><span class="search-result-title">${escapeHTML(result.title)}</span><span class="row-meta">${escapeHTML(result.type)}${result.detail ? ` · ${escapeHTML(result.detail)}` : ""}</span></span><span class="muted">${escapeHTML(hobby?.name || result.hobbyId || "")}</span></a>`;
+    }).join("") : `<div class="empty-state compact-empty">No matches.</div>`;
+  }
+
+  $("#globalSearch")?.addEventListener("input", renderGlobalSearch);
+
+  if (owner) {
     const recent = activity.slice(0, 6);
     const recentTarget = $("#recentActivity");
     recentTarget.innerHTML = recent.length ? recent.map(entry => {
-      const hobby = allHobbies.find(x => x.id === entry.hobbyId);
+      const hobby = hobbyFor(entry.hobbyId);
       const item = state.items.find(x => x.id === entry.itemId);
       return `<div class="simple-row">
         <span>${escapeHTML(entry.note || item?.title || "Practice session")}</span>
         <span class="muted">${escapeHTML(hobby?.name || entry.hobbyId)} · ${entry.minutes} min · ${formatDate(entry.date)}</span>
       </div>`;
     }).join("") : `<div class="empty-state">No activity logged yet.</div>`;
+
+    const touched = state.items
+      .filter(item => !item.archived && item.touchedAt)
+      .sort((a, b) => String(b.touchedAt).localeCompare(String(a.touchedAt)))
+      .slice(0, 5);
+    $("#recentlyTouched").innerHTML = touched.length ? touched.map(item => {
+      const hobby = hobbyFor(item.hobbyId);
+      return `<a class="recent-touch-row" href="${escapeHTML(resultLink(item.hobbyId, `#item-${item.id}`))}"><span><span class="row-title">${escapeHTML(item.title)}</span><span class="row-meta">${escapeHTML(hobby?.name || item.hobbyId)} · ${itemKindLabel(item.kind)} · ${itemStatusLabel(item.status)}</span></span><span class="muted">${formatDate(item.touchedAt)}</span></a>`;
+    }).join("") : `<div class="empty-state compact-empty">Nothing touched yet.</div>`;
+
+    function renderHomeCuriosity() {
+      const target = $("#curiosityList");
+      const curiosities = [...state.curiosities].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      target.innerHTML = curiosities.length ? curiosities.map(item => {
+        const oldHobby = item.hobbyId ? hobbyFor(item.hobbyId) : null;
+        return `<article class="curiosity-row"><div class="curiosity-top"><div class="row-main"><div class="row-title">${escapeHTML(item.title)}</div>${oldHobby ? `<div class="row-meta">Previously filed under ${escapeHTML(oldHobby.name)}</div>` : ""}${item.note ? `<p class="row-note">${escapeHTML(item.note)}</p>` : ""}${item.url ? `<div class="row-meta"><a href="${escapeHTML(item.url)}" target="_blank" rel="noreferrer">Open link ↗</a></div>` : ""}</div><div class="row-actions"><button class="mini-button" data-promote-curiosity="${item.id}" type="button">Move to hobby</button><button class="text-button danger" data-delete-curiosity="${item.id}" type="button">Delete</button></div></div></article>`;
+      }).join("") : `<div class="empty-state compact-empty">Nothing waiting here.</div>`;
+
+      $$('[data-promote-curiosity]').forEach(button => button.addEventListener("click", () => {
+        const form = $("#promoteCuriosityForm");
+        form.reset();
+        form.elements.curiosityId.value = button.dataset.promoteCuriosity;
+        $("#promoteCuriosityDialog").showModal();
+      }));
+      $$('[data-delete-curiosity]').forEach(button => button.addEventListener("click", async () => {
+        const curiosity = state.curiosities.find(x => x.id === button.dataset.deleteCuriosity);
+        if (!curiosity || !confirm(`Delete “${curiosity.title}”?`)) return;
+        await runWrite(() => db.from("curiosities").delete().eq("id", curiosity.id));
+        await reloadState();
+        renderHome();
+      }));
+    }
+
+    renderHomeCuriosity();
     $("#exportButton")?.addEventListener("click", exportSnapshot);
+    $("#addCuriosityButton")?.addEventListener("click", () => {
+      $("#curiosityForm").reset();
+      $("#curiosityDialog").showModal();
+    });
+    $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
+
+    $("#curiosityForm")?.addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      await runWrite(() => db.from("curiosities").insert({
+        hobby_id: null,
+        title: String(data.get("title")).trim(),
+        url: String(data.get("url") || "").trim(),
+        note: String(data.get("note") || "").trim()
+      }));
+      await reloadState();
+      $("#curiosityDialog").close();
+      renderHome();
+    });
+
+    $("#promoteCuriosityForm")?.addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const curiosity = state.curiosities.find(x => x.id === String(data.get("curiosityId")));
+      if (!curiosity) return;
+      const hobbyId = String(data.get("hobbyId"));
+      const kind = String(data.get("kind"));
+      const now = new Date().toISOString();
+      await runWrite(() => db.from("items").insert({
+        hobby_id: hobbyId,
+        title: curiosity.title,
+        kind,
+        status: "planned",
+        progress: 0,
+        notes: curiosity.note || "",
+        next_action: "",
+        tags: ["from-curiosity"],
+        visibility: defaultItemVisibility(),
+        touched_at: now
+      }));
+      if (curiosity.url) {
+        await runWrite(() => db.from("resources").insert({
+          hobby_id: hobbyId,
+          item_id: null,
+          label: curiosity.title,
+          type: "Reference",
+          url: curiosity.url,
+          note: "Saved from curiosity inbox",
+          visibility: defaultItemVisibility()
+        }));
+      }
+      await runWrite(() => db.from("curiosities").delete().eq("id", curiosity.id));
+      await reloadState();
+      $("#promoteCuriosityDialog").close();
+      renderHome();
+    });
   }
 
   bindGlobalHeader();
@@ -551,8 +730,9 @@ function dialogMarkup() {
     <input name="itemId" type="hidden" />
     <div class="form-grid">
       <label>Label<input name="label" required /></label>
-      <label>Type<input name="type" placeholder="Article, book, video…" /></label>
-      <label class="full">URL<input name="url" type="url" required placeholder="https://…" /></label>
+      <label>Type<input name="type" list="resourceTypeSuggestions" placeholder="Book, video, website…" /></label>
+      <datalist id="resourceTypeSuggestions"><option value="Article"></option><option value="Book"></option><option value="Video"></option><option value="Website"></option><option value="Paper"></option><option value="App"></option><option value="Course"></option><option value="Podcast"></option><option value="Reference"></option><option value="Person"></option><option value="Place"></option></datalist>
+      <label class="full">URL (optional)<input name="url" type="url" placeholder="https://…" /></label>
       <label class="full">Note<input name="note" placeholder="Why I saved this" /></label>
       <label id="resourceVisibilityField">Visibility<select name="visibility"><option value="public">Public</option><option value="private">Private</option></select></label>
     </div>
@@ -580,16 +760,6 @@ function dialogMarkup() {
     <div class="form-grid"><label class="full">Image<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" required /></label></div>
     <p class="form-note">JPEG, PNG, WebP or GIF. Maximum 5 MB.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="trophyImageDialog">Cancel</button><button class="primary-button" type="submit">Upload</button></div>
-  </form></dialog>
-
-  <dialog id="curiosityDialog"><form id="curiosityForm" class="dialog-body">
-    <div class="dialog-heading"><h2>Add curiosity</h2><button type="button" class="dialog-close" data-close="curiosityDialog">×</button></div>
-    <div class="form-grid">
-      <label class="full">What caught my attention?<input name="title" required /></label>
-      <label class="full">Link<input name="url" type="url" placeholder="https://…" /></label>
-      <label class="full">Note<textarea name="note" placeholder="Why this looked interesting"></textarea></label>
-    </div>
-    <div class="dialog-actions"><button type="button" class="quiet-button" data-close="curiosityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>`;
 }
 
@@ -612,7 +782,7 @@ function renderHobbyShell(config) {
       </section>
 
       <nav class="hobby-nav" aria-label="Page sections">
-        ${owner ? `<a href="#focus">Focus</a>` : ""}<a href="#overview">Activity</a><a href="#work">Items</a><a href="#resources">Resources</a><a href="#milestones">Milestones</a>${owner ? `<a href="#curiosity">Curiosity</a>` : ""}<a href="#history">History</a>${owner ? `<a href="#archive">Archive</a>` : ""}
+        ${owner ? `<a href="#focus">Focus</a>` : ""}<a href="#overview">Activity</a><a href="#work">Items</a><a href="#resources">Resources</a><a href="#milestones">Milestones</a><a href="#history">History</a>${owner ? `<a href="#archive">Archive</a>` : ""}
       </nav>
 
       <section class="summary-row" aria-label="Hobby summary">
@@ -669,11 +839,6 @@ function renderHobbyShell(config) {
         <div class="section-heading"><div><h2>Milestones</h2><p>${owner ? "What I’m working toward, and a trophy case for what I’ve achieved." : "Milestones and achievements I’ve chosen to share."}</p></div>${owner ? `<button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>` : ""}</div>
         <div id="milestoneList"></div>
       </section>
-
-      ${owner ? `<section id="curiosity" class="section-block">
-        <div class="section-heading"><div><h2>Curiosity inbox</h2><p>Interesting things I may want to explore later, without turning them into commitments yet.</p></div><button id="addCuriosityButton" class="quiet-button" type="button">Add curiosity</button></div>
-        <div id="curiosityList" class="curiosity-list"></div>
-      </section>` : ""}
 
       <section id="history" class="section-block">
         <div class="section-heading"><div><h2>History</h2><p>An automatic month-by-month record from things already logged.</p></div></div>
@@ -757,7 +922,6 @@ function initHobbyPage(config) {
   const visibleItems = () => hobbyItems().filter(x => !x.archived);
   const activeItems = () => visibleItems().filter(x => x.status !== "done");
   const hobbyMilestones = () => state.milestones.filter(x => x.hobbyId === hobbyId);
-  const hobbyCuriosities = () => state.curiosities.filter(x => x.hobbyId === hobbyId);
   const hobbyActivity = () => state.activity.filter(x => x.hobbyId === hobbyId);
   const hobbyResources = () => state.resources.filter(x => x.hobbyId === hobbyId && !x.itemId);
 
@@ -843,7 +1007,7 @@ function initHobbyPage(config) {
 
     target.innerHTML = items.map(item => {
       const resources = item.kind === "project" ? (item.resources || []) : [];
-      return `<article class="item-row">
+      return `<article class="item-row" id="item-${item.id}">
         <div class="item-top">
           <div class="row-main">
             <div class="row-labels">${owner && item.isFocus ? `<span class="focus-badge">Focus</span>` : ""}<span class="type-tag">${itemKindLabel(item.kind)}</span><span class="status">${itemStatusLabel(item.status)}</span>${itemVisibilityControl(item)}</div>
@@ -863,7 +1027,7 @@ function initHobbyPage(config) {
         </div>
         ${item.kind === "project" ? `<div class="resource-shelf">
           <div class="resource-heading"><h4>Resources</h4></div>
-          ${resources.length ? resources.map(resource => `<div class="resource-row"><div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<div class="row-actions"><button class="text-button" data-edit-resource="${resource.id}">Edit</button><button class="text-button danger" data-delete-resource="${resource.id}">Remove</button></div>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
+          ${resources.length ? resources.map(resource => `<div class="resource-row"><div>${resource.url ? `<a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="resource-title-static">${escapeHTML(resource.label)}</span>`}${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<div class="row-actions"><button class="text-button" data-edit-resource="${resource.id}">Edit</button><button class="text-button danger" data-delete-resource="${resource.id}">Remove</button></div>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
         </div>` : ""}
       </article>`;
     }).join("");
@@ -941,10 +1105,10 @@ function initHobbyPage(config) {
       .filter(resource => !query || [resource.label, resource.type, resource.note, resource.url].join(" ").toLowerCase().includes(query))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 
-    target.innerHTML = resources.length ? resources.map(resource => `<article class="library-resource-row">
+    target.innerHTML = resources.length ? resources.map(resource => `<article class="library-resource-row" id="resource-${resource.id}">
       <div class="row-main">
         <div class="row-labels">${resource.type ? `<span class="type-tag">${escapeHTML(resource.type)}</span>` : ""}${resourceVisibilityControl(resource)}</div>
-        <a class="library-resource-title" href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>
+        ${resource.url ? `<a class="library-resource-title" href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="library-resource-title resource-title-static">${escapeHTML(resource.label)}</span>`}
         ${resource.note ? `<p class="row-note">${escapeHTML(resource.note)}</p>` : ""}
       </div>
       ${owner ? `<div class="row-actions"><button class="mini-button" data-edit-hobby-resource="${resource.id}" type="button">Edit</button><button class="text-button danger" data-delete-hobby-resource="${resource.id}" type="button">Delete</button></div>` : ""}
@@ -1026,38 +1190,6 @@ function initHobbyPage(config) {
     }
   }
 
-  function renderCuriosity() {
-    if (!owner) return;
-    const curiosities = hobbyCuriosities();
-    const target = $("#curiosityList");
-    if (!curiosities.length) {
-      target.innerHTML = `<div class="empty-state">Nothing waiting here.</div>`;
-      return;
-    }
-    target.innerHTML = curiosities.map(item => `<article class="curiosity-row"><div class="curiosity-top"><div class="row-main"><div class="row-title">${escapeHTML(item.title)}</div>${item.note ? `<p class="row-note">${escapeHTML(item.note)}</p>` : ""}${item.url ? `<div class="row-meta"><a href="${escapeHTML(item.url)}" target="_blank" rel="noreferrer">Open link ↗</a></div>` : ""}</div><div class="row-actions"><button class="mini-button" data-promote-curiosity="${item.id}">Move to items</button><button class="text-button danger" data-delete-curiosity="${item.id}">Delete</button></div></div></article>`).join("");
-
-    $$('[data-promote-curiosity]').forEach(button => button.addEventListener("click", async () => {
-      const curiosity = state.curiosities.find(x => x.id === button.dataset.promoteCuriosity);
-      if (!curiosity) return;
-      await runWrite(() => db.from("items").insert({
-        hobby_id: hobbyId,
-        title: curiosity.title,
-        kind: "learning",
-        status: "planned",
-        progress: 0,
-        notes: curiosity.note || "",
-        next_action: "",
-        tags: ["from-curiosity"],
-        visibility: defaultItemVisibility()
-      }));
-      await runWrite(() => db.from("curiosities").delete().eq("id", curiosity.id));
-      await reloadState(); refresh();
-    }));
-    $$('[data-delete-curiosity]').forEach(button => button.addEventListener("click", async () => {
-      await runWrite(() => db.from("curiosities").delete().eq("id", button.dataset.deleteCuriosity));
-      await reloadState(); refresh();
-    }));
-  }
 
   function buildHistoryEvents() {
     const events = [];
@@ -1204,7 +1336,6 @@ function initHobbyPage(config) {
     renderItems();
     renderResources();
     renderMilestones();
-    renderCuriosity();
     renderHistory();
     renderArchive();
   }
@@ -1243,7 +1374,6 @@ function initHobbyPage(config) {
     $("#logActivityButton").addEventListener("click", () => openActivity());
     $("#addHobbyResourceButton").addEventListener("click", () => openResource());
     $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
-    $("#addCuriosityButton").addEventListener("click", () => $("#curiosityDialog").showModal());
     $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
 
     $("#itemForm").addEventListener("submit", async event => {
@@ -1380,21 +1510,6 @@ function initHobbyPage(config) {
       }
       await reloadState();
       $("#trophyImageDialog").close();
-      refresh();
-    });
-
-    $("#curiosityForm").addEventListener("submit", async event => {
-      event.preventDefault();
-      const data = new FormData(event.currentTarget);
-      await runWrite(() => db.from("curiosities").insert({
-        hobby_id: hobbyId,
-        title: String(data.get("title")).trim(),
-        url: String(data.get("url") || "").trim(),
-        note: String(data.get("note") || "").trim()
-      }));
-      await reloadState();
-      event.currentTarget.reset();
-      $("#curiosityDialog").close();
       refresh();
     });
   }
