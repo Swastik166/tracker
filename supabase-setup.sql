@@ -27,11 +27,13 @@ create table if not exists public.items (
 create table if not exists public.resources (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  item_id uuid not null references public.items(id) on delete cascade,
+  hobby_id text not null,
+  item_id uuid references public.items(id) on delete cascade,
   label text not null,
   type text not null default '',
   url text not null,
   note text not null default '',
+  visibility text not null default 'public' check (visibility in ('public', 'private')),
   created_at timestamptz not null default now()
 );
 
@@ -85,6 +87,16 @@ create table if not exists public.hobby_notes (
 alter table public.items add column if not exists visibility text not null default 'public';
 alter table public.milestones add column if not exists visibility text not null default 'auto';
 alter table public.activity add column if not exists public_heatmap boolean not null default true;
+alter table public.resources add column if not exists hobby_id text;
+alter table public.resources add column if not exists visibility text not null default 'public';
+alter table public.resources alter column item_id drop not null;
+
+-- Existing project resources gain their hobby automatically.
+update public.resources r
+set hobby_id = i.hobby_id
+from public.items i
+where r.item_id = i.id
+  and (r.hobby_id is null or r.hobby_id = '');
 
 -- Keep the allowed values constrained even after an upgrade.
 do $$ begin
@@ -95,9 +107,14 @@ do $$ begin
   alter table public.milestones add constraint milestones_visibility_check check (visibility in ('auto', 'public', 'private'));
 exception when duplicate_object then null; end $$;
 
+do $$ begin
+  alter table public.resources add constraint resources_visibility_check check (visibility in ('public', 'private'));
+exception when duplicate_object then null; end $$;
+
 create index if not exists items_user_hobby_idx on public.items(user_id, hobby_id);
 create index if not exists items_touched_idx on public.items(user_id, touched_at desc);
 create index if not exists resources_item_idx on public.resources(item_id);
+create index if not exists resources_user_hobby_idx on public.resources(user_id, hobby_id);
 create index if not exists milestones_user_hobby_idx on public.milestones(user_id, hobby_id);
 create index if not exists activity_user_hobby_date_idx on public.activity(user_id, hobby_id, activity_date desc);
 create index if not exists curiosity_user_hobby_idx on public.curiosities(user_id, hobby_id);
@@ -141,7 +158,7 @@ grant select (
   archived, visibility, created_at, updated_at, touched_at, completed_at
 ) on public.items to anon;
 
-grant select (id, item_id, label, type, url, note, created_at)
+grant select (id, hobby_id, item_id, label, type, url, note, visibility, created_at)
 on public.resources to anon;
 
 grant select (
@@ -192,7 +209,12 @@ using (visibility = 'public' and archived = false);
 drop policy if exists "resources public read" on public.resources;
 create policy "resources public read" on public.resources for select to anon
 using (
-  exists (
+  (
+    item_id is null
+    and visibility = 'public'
+    and hobby_id is not null
+  )
+  or exists (
     select 1
     from public.items i
     where i.id = item_id

@@ -718,3 +718,50 @@ code {
 @media (max-width: 640px) {
   .visibility-select { min-width: 74px; }
 }
+
+
+/* v7: editable activity + hobby-level resource library */
+.activity-row {
+  align-items: center;
+}
+
+.resource-toolbar {
+  grid-template-columns: minmax(0, 420px);
+}
+
+.resource-library {
+  border-top: 1px solid var(--line);
+}
+
+.library-resource-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.library-resource-title {
+  display: inline-block;
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.library-resource-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+#resourceVisibilityField[hidden] {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .activity-row,
+  .library-resource-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

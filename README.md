@@ -10,6 +10,7 @@ No account is required. Visitors can see:
 - hobby pages listed in `hobbies.js`
 - learning/project items marked **Public**
 - resources attached to public projects
+- hobby-level resources marked **Public**
 - public milestones and the trophy case
 - the activity heatmap (date + minutes only)
 - public history generated from shared completions and milestones
@@ -24,7 +25,8 @@ After signing in will get:
 - Current Focus
 - private hobby notes
 - Curiosity Inbox
-- detailed activity notes
+- detailed activity notes, with edit/delete controls for logged sessions
+- hobby-level resource library, with public/private visibility
 - archive
 - visibility controls
 - backups
@@ -54,3 +56,14 @@ Supabase stores all changing content. GitHub stores only the static website code
 - `hobbies.js` — central hobby registry
 - `hobbies/*.html` — one tiny page per hobby
 - `supabase-setup.sql` — database, security policies, and Storage setup
+
+
+## v7 additions
+
+- Logged activity can be edited or deleted from the hobby Activity section.
+- Each hobby has a standalone **Resources** section for links/references that do not belong to a specific project.
+- Hobby-level resources can be **Public** or **Private**.
+- Project resources still stay attached to their project and inherit that project's visibility.
+- Existing project resources are preserved by `supabase-v7-migration.sql`.
+
+If the v6 database is already running, execute `supabase-v7-migration.sql` once in the Supabase SQL Editor before deploying the v7 JavaScript. The full `supabase-setup.sql` is also updated for fresh installs.

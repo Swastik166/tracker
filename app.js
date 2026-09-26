@@ -5,6 +5,8 @@ let db = null;
 let currentUser = null;
 let state = emptyState();
 let editingItemId = null;
+let editingActivityId = null;
+let editingResourceId = null;
 const signedImageCache = new Map();
 
 function emptyState() {
@@ -270,11 +272,13 @@ function mapItem(row) {
 function mapResource(row) {
   return {
     id: row.id,
-    itemId: row.item_id,
+    hobbyId: row.hobby_id || "",
+    itemId: row.item_id || "",
     label: row.label,
     type: row.type || "",
     url: row.url,
     note: row.note || "",
+    visibility: row.visibility || "public",
     createdAt: row.created_at
   };
 }
@@ -323,6 +327,7 @@ function mapActivity(row) {
 function attachResources(items, resources) {
   const resourceMap = new Map();
   resources.forEach(resource => {
+    if (!resource.itemId) return;
     if (!resourceMap.has(resource.itemId)) resourceMap.set(resource.itemId, []);
     resourceMap.get(resource.itemId).push(resource);
   });
@@ -359,7 +364,7 @@ async function loadOwnerState() {
 async function loadPublicState() {
   const [itemsResult, resourcesResult, milestonesResult, activityResult] = await Promise.all([
     db.from("items").select("id,hobby_id,title,kind,status,progress,tags,notes,archived,visibility,created_at,updated_at,touched_at,completed_at").order("touched_at", { ascending: false }),
-    db.from("resources").select("id,item_id,label,type,url,note,created_at").order("created_at", { ascending: true }),
+    db.from("resources").select("id,hobby_id,item_id,label,type,url,note,visibility,created_at").order("created_at", { ascending: true }),
     db.from("milestones").select("id,hobby_id,title,type,status,target_date,achieved_date,note,image_path,visibility,created_at,updated_at").order("created_at", { ascending: false }),
     db.from("activity").select("hobby_id,activity_date,minutes").order("activity_date", { ascending: false })
   ]);
@@ -408,6 +413,7 @@ function exportSnapshot() {
   const data = {
     exportedAt: new Date().toISOString(),
     items: state.items,
+    resources: state.resources,
     milestones: state.milestones,
     curiosities: state.curiosities,
     activity: state.activity,
@@ -528,7 +534,7 @@ function dialogMarkup() {
   </form></dialog>
 
   <dialog id="activityDialog"><form id="activityForm" class="dialog-body">
-    <div class="dialog-heading"><h2>Log activity</h2><button type="button" class="dialog-close" data-close="activityDialog">×</button></div>
+    <div class="dialog-heading"><h2 id="activityDialogTitle">Log activity</h2><button type="button" class="dialog-close" data-close="activityDialog">×</button></div>
     <div class="form-grid">
       <label>Date<input name="date" type="date" required /></label>
       <label>Minutes<input name="minutes" type="number" min="1" max="1440" value="30" required /></label>
@@ -541,15 +547,16 @@ function dialogMarkup() {
   </form></dialog>
 
   <dialog id="resourceDialog"><form id="resourceForm" class="dialog-body">
-    <div class="dialog-heading"><h2>Add resource</h2><button type="button" class="dialog-close" data-close="resourceDialog">×</button></div>
+    <div class="dialog-heading"><h2 id="resourceDialogTitle">Add resource</h2><button type="button" class="dialog-close" data-close="resourceDialog">×</button></div>
     <input name="itemId" type="hidden" />
     <div class="form-grid">
       <label>Label<input name="label" required /></label>
       <label>Type<input name="type" placeholder="Article, book, video…" /></label>
       <label class="full">URL<input name="url" type="url" required placeholder="https://…" /></label>
       <label class="full">Note<input name="note" placeholder="Why I saved this" /></label>
+      <label id="resourceVisibilityField">Visibility<select name="visibility"><option value="public">Public</option><option value="private">Private</option></select></label>
     </div>
-    <p class="form-note">Resources inherit the public/private setting of their project.</p>
+    <p id="resourceFormNote" class="form-note">Hobby resources can be public or private.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="resourceDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
@@ -605,7 +612,7 @@ function renderHobbyShell(config) {
       </section>
 
       <nav class="hobby-nav" aria-label="Page sections">
-        ${owner ? `<a href="#focus">Focus</a>` : ""}<a href="#overview">Activity</a><a href="#work">Items</a><a href="#milestones">Milestones</a>${owner ? `<a href="#curiosity">Curiosity</a>` : ""}<a href="#history">History</a>${owner ? `<a href="#archive">Archive</a>` : ""}
+        ${owner ? `<a href="#focus">Focus</a>` : ""}<a href="#overview">Activity</a><a href="#work">Items</a><a href="#resources">Resources</a><a href="#milestones">Milestones</a>${owner ? `<a href="#curiosity">Curiosity</a>` : ""}<a href="#history">History</a>${owner ? `<a href="#archive">Archive</a>` : ""}
       </nav>
 
       <section class="summary-row" aria-label="Hobby summary">
@@ -645,6 +652,17 @@ function renderHobbyShell(config) {
           <select id="itemKind"><option value="all">All types</option><option value="learning">Learning</option><option value="project">Project</option></select>
         </div>
         <div id="itemList" class="item-list"></div>
+      </section>
+
+      <section id="resources" class="section-block">
+        <div class="section-heading">
+          <div><h2>Resources</h2><p>Links and references I want to keep for this hobby, without attaching them to a specific project.</p></div>
+          ${owner ? `<button id="addHobbyResourceButton" class="quiet-button" type="button">Add resource</button>` : ""}
+        </div>
+        <div class="toolbar resource-toolbar">
+          <input id="resourceSearch" type="search" placeholder="Search resources…" />
+        </div>
+        <div id="hobbyResourceList" class="resource-library"></div>
       </section>
 
       <section id="milestones" class="section-block">
@@ -741,6 +759,7 @@ function initHobbyPage(config) {
   const hobbyMilestones = () => state.milestones.filter(x => x.hobbyId === hobbyId);
   const hobbyCuriosities = () => state.curiosities.filter(x => x.hobbyId === hobbyId);
   const hobbyActivity = () => state.activity.filter(x => x.hobbyId === hobbyId);
+  const hobbyResources = () => state.resources.filter(x => x.hobbyId === hobbyId && !x.itemId);
 
   function renderSummary() {
     const items = visibleItems();
@@ -776,10 +795,31 @@ function initHobbyPage(config) {
     $("#activityCaption").textContent = entries.length ? `${entries.length} ${entries.length === 1 ? "entry" : "entries"} · ${minutesLabel(minutes)} logged` : "No activity logged yet.";
     if (!owner) return;
     const target = $("#activityList");
-    target.innerHTML = entries.slice(0, 5).map(entry => {
+    target.innerHTML = entries.map(entry => {
       const item = state.items.find(x => x.id === entry.itemId);
-      return `<div class="simple-row"><span>${escapeHTML(entry.note || item?.title || "Practice session")}</span><span class="muted">${entry.minutes} min · ${formatDate(entry.date)}</span></div>`;
-    }).join("") || `<div class="empty-state compact-empty">No recent sessions.</div>`;
+      return `<div class="simple-row activity-row">
+        <div class="row-main">
+          <div>${escapeHTML(entry.note || item?.title || "Practice session")}</div>
+          <div class="row-meta">${entry.minutes} min · ${formatDate(entry.date)}${item ? ` · ${escapeHTML(item.title)}` : ""}${entry.publicHeatmap ? " · public heatmap" : " · private"}</div>
+        </div>
+        <div class="row-actions">
+          <button class="mini-button" data-edit-activity="${entry.id}" type="button">Edit</button>
+          <button class="text-button danger" data-delete-activity="${entry.id}" type="button">Delete</button>
+        </div>
+      </div>`;
+    }).join("") || `<div class="empty-state compact-empty">No sessions logged yet.</div>`;
+
+    $$("[data-edit-activity]").forEach(button => button.addEventListener("click", () => {
+      const entry = state.activity.find(x => x.id === button.dataset.editActivity);
+      if (entry) openActivity(entry.itemId, entry);
+    }));
+    $$("[data-delete-activity]").forEach(button => button.addEventListener("click", async () => {
+      const entry = state.activity.find(x => x.id === button.dataset.deleteActivity);
+      if (!entry || !confirm(`Delete the ${entry.minutes}-minute activity from ${formatDate(entry.date)}?`)) return;
+      await runWrite(() => db.from("activity").delete().eq("id", entry.id));
+      await reloadState();
+      refresh();
+    }));
   }
 
   function itemMatchesFilters(item) {
@@ -823,7 +863,7 @@ function initHobbyPage(config) {
         </div>
         ${item.kind === "project" ? `<div class="resource-shelf">
           <div class="resource-heading"><h4>Resources</h4></div>
-          ${resources.length ? resources.map(resource => `<div class="resource-row"><div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<button class="text-button" data-delete-resource="${resource.id}">Remove</button>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
+          ${resources.length ? resources.map(resource => `<div class="resource-row"><div><a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<div class="row-actions"><button class="text-button" data-edit-resource="${resource.id}">Edit</button><button class="text-button danger" data-delete-resource="${resource.id}">Remove</button></div>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
         </div>` : ""}
       </article>`;
     }).join("");
@@ -833,6 +873,10 @@ function initHobbyPage(config) {
     bindItemVisibilityControls();
     $$('[data-edit-item]').forEach(button => button.addEventListener("click", () => openItem(state.items.find(x => x.id === button.dataset.editItem))));
     $$('[data-add-resource]').forEach(button => button.addEventListener("click", () => openResource(button.dataset.addResource)));
+    $$('[data-edit-resource]').forEach(button => button.addEventListener("click", () => {
+      const resource = state.resources.find(x => x.id === button.dataset.editResource);
+      if (resource) openResource(resource.itemId, resource);
+    }));
     $$('[data-archive-item]').forEach(button => button.addEventListener("click", async () => {
       await runWrite(() => db.from("items").update({ archived: true, is_focus: false }).eq("id", button.dataset.archiveItem));
       await reloadState(); refresh();
@@ -879,6 +923,50 @@ function initHobbyPage(config) {
         await reloadState(); refresh();
       });
     });
+  }
+
+  function resourceVisibilityControl(resource) {
+    if (!owner) return "";
+    return `<select class="visibility-select" data-resource-visibility="${resource.id}" aria-label="Visibility for ${escapeHTML(resource.label)}">
+      <option value="public" ${resource.visibility === "public" ? "selected" : ""}>Public</option>
+      <option value="private" ${resource.visibility === "private" ? "selected" : ""}>Private</option>
+    </select>`;
+  }
+
+  function renderResources() {
+    const target = $("#hobbyResourceList");
+    if (!target) return;
+    const query = ($("#resourceSearch")?.value || "").trim().toLowerCase();
+    const resources = hobbyResources()
+      .filter(resource => !query || [resource.label, resource.type, resource.note, resource.url].join(" ").toLowerCase().includes(query))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+    target.innerHTML = resources.length ? resources.map(resource => `<article class="library-resource-row">
+      <div class="row-main">
+        <div class="row-labels">${resource.type ? `<span class="type-tag">${escapeHTML(resource.type)}</span>` : ""}${resourceVisibilityControl(resource)}</div>
+        <a class="library-resource-title" href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>
+        ${resource.note ? `<p class="row-note">${escapeHTML(resource.note)}</p>` : ""}
+      </div>
+      ${owner ? `<div class="row-actions"><button class="mini-button" data-edit-hobby-resource="${resource.id}" type="button">Edit</button><button class="text-button danger" data-delete-hobby-resource="${resource.id}" type="button">Delete</button></div>` : ""}
+    </article>`).join("") : `<div class="empty-state">${query ? "No matching resources." : "No hobby resources saved yet."}</div>`;
+
+    if (!owner) return;
+    $$("[data-resource-visibility]").forEach(select => select.addEventListener("change", async () => {
+      await runWrite(() => db.from("resources").update({ visibility: select.value }).eq("id", select.dataset.resourceVisibility));
+      await reloadState();
+      refresh();
+    }));
+    $$("[data-edit-hobby-resource]").forEach(button => button.addEventListener("click", () => {
+      const resource = state.resources.find(x => x.id === button.dataset.editHobbyResource);
+      if (resource) openResource("", resource);
+    }));
+    $$("[data-delete-hobby-resource]").forEach(button => button.addEventListener("click", async () => {
+      const resource = state.resources.find(x => x.id === button.dataset.deleteHobbyResource);
+      if (!resource || !confirm(`Delete resource “${resource.label}”?`)) return;
+      await runWrite(() => db.from("resources").delete().eq("id", resource.id));
+      await reloadState();
+      refresh();
+    }));
   }
 
   async function renderMilestones() {
@@ -1051,7 +1139,7 @@ function initHobbyPage(config) {
 
   function renderActivitySelect(selected = "") {
     const select = $("#activityItemSelect");
-    select.innerHTML = `<option value="">General practice</option>` + activeItems().map(item => `<option value="${item.id}">${escapeHTML(item.title)}</option>`).join("");
+    select.innerHTML = `<option value="">General practice</option>` + visibleItems().map(item => `<option value="${item.id}">${escapeHTML(item.title)}</option>`).join("");
     select.value = selected || "";
   }
 
@@ -1076,20 +1164,36 @@ function initHobbyPage(config) {
     $("#itemDialog").showModal();
   }
 
-  function openActivity(itemId = "") {
+  function openActivity(itemId = "", entry = null) {
     const form = $("#activityForm");
+    editingActivityId = entry?.id || null;
     form.reset();
-    form.elements.date.value = todayISO();
-    form.elements.minutes.value = 30;
-    form.elements.publicHeatmap.checked = defaultPublicHeatmap();
-    renderActivitySelect(itemId);
+    $("#activityDialogTitle").textContent = entry ? "Edit activity" : "Log activity";
+    form.elements.date.value = entry?.date || todayISO();
+    form.elements.minutes.value = Number(entry?.minutes || 30);
+    form.elements.note.value = entry?.note || "";
+    form.elements.publicHeatmap.checked = entry ? Boolean(entry.publicHeatmap) : defaultPublicHeatmap();
+    renderActivitySelect(entry?.itemId || itemId);
     $("#activityDialog").showModal();
   }
 
-  function openResource(itemId) {
+  function openResource(itemId = "", resource = null) {
     const form = $("#resourceForm");
+    editingResourceId = resource?.id || null;
     form.reset();
-    form.elements.itemId.value = itemId;
+    const linkedItemId = resource?.itemId || itemId || "";
+    form.elements.itemId.value = linkedItemId;
+    form.elements.label.value = resource?.label || "";
+    form.elements.type.value = resource?.type || "";
+    form.elements.url.value = resource?.url || "";
+    form.elements.note.value = resource?.note || "";
+    form.elements.visibility.value = resource?.visibility || "public";
+    $("#resourceDialogTitle").textContent = resource ? "Edit resource" : "Add resource";
+    const standalone = !linkedItemId;
+    $("#resourceVisibilityField").hidden = !standalone;
+    $("#resourceFormNote").textContent = standalone
+      ? "This resource belongs to the hobby itself and can be public or private."
+      : "This resource belongs to a project and inherits that project's public/private setting.";
     $("#resourceDialog").showModal();
   }
 
@@ -1098,6 +1202,7 @@ function initHobbyPage(config) {
     renderFocus();
     renderActivity();
     renderItems();
+    renderResources();
     renderMilestones();
     renderCuriosity();
     renderHistory();
@@ -1107,6 +1212,7 @@ function initHobbyPage(config) {
   $("#itemSearch").addEventListener("input", renderItems);
   $("#itemStatus").addEventListener("change", renderItems);
   $("#itemKind").addEventListener("change", renderItems);
+  $("#resourceSearch")?.addEventListener("input", renderResources);
 
   if (owner) {
     $("#hobbyNotes").value = state.hobbyNotes[hobbyId] || "";
@@ -1135,6 +1241,7 @@ function initHobbyPage(config) {
     $("#addItemButton").addEventListener("click", () => openItem());
     $("#addItemButton2").addEventListener("click", () => openItem());
     $("#logActivityButton").addEventListener("click", () => openActivity());
+    $("#addHobbyResourceButton").addEventListener("click", () => openResource());
     $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
     $("#addCuriosityButton").addEventListener("click", () => $("#curiosityDialog").showModal());
     $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
@@ -1173,17 +1280,23 @@ function initHobbyPage(config) {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const itemId = String(data.get("itemId") || "") || null;
-      await runWrite(() => db.from("activity").insert({
+      const payload = {
         hobby_id: hobbyId,
         activity_date: String(data.get("date")),
         minutes: Number(data.get("minutes")) || 0,
         item_id: itemId,
         note: String(data.get("note") || "").trim(),
         public_heatmap: data.get("publicHeatmap") === "yes"
-      }));
+      };
+      if (editingActivityId) {
+        await runWrite(() => db.from("activity").update(payload).eq("id", editingActivityId));
+      } else {
+        await runWrite(() => db.from("activity").insert(payload));
+      }
       if (itemId) {
         await runWrite(() => db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId));
       }
+      editingActivityId = null;
       await reloadState();
       $("#activityDialog").close();
       refresh();
@@ -1192,15 +1305,25 @@ function initHobbyPage(config) {
     $("#resourceForm").addEventListener("submit", async event => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
-      const itemId = String(data.get("itemId"));
-      await runWrite(() => db.from("resources").insert({
+      const itemId = String(data.get("itemId") || "") || null;
+      const payload = {
+        hobby_id: hobbyId,
         item_id: itemId,
         label: String(data.get("label")).trim(),
         type: String(data.get("type") || "").trim(),
         url: String(data.get("url")).trim(),
-        note: String(data.get("note") || "").trim()
-      }));
-      await db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId);
+        note: String(data.get("note") || "").trim(),
+        visibility: itemId ? "public" : String(data.get("visibility") || "public")
+      };
+      if (editingResourceId) {
+        await runWrite(() => db.from("resources").update(payload).eq("id", editingResourceId));
+      } else {
+        await runWrite(() => db.from("resources").insert(payload));
+      }
+      if (itemId) {
+        await db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", itemId);
+      }
+      editingResourceId = null;
       await reloadState();
       $("#resourceDialog").close();
       refresh();
