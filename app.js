@@ -47,6 +47,34 @@ function normalizeWebUrl(value = "") {
   }
 }
 
+
+async function copyShareLink(anchor) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = anchor.startsWith("#") ? anchor : `#${anchor}`;
+  try {
+    await navigator.clipboard.writeText(url.href);
+    alert("Link copied.");
+  } catch {
+    window.prompt("Copy this link:", url.href);
+  }
+}
+
+function clearQuickQuery() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("quick")) return;
+  url.searchParams.delete("quick");
+  const search = url.searchParams.toString();
+  history.replaceState(null, "", `${url.pathname}${search ? `?${search}` : ""}${url.hash}`);
+}
+
+function scrollToCurrentHash() {
+  if (!window.location.hash) return;
+  const id = decodeURIComponent(window.location.hash.slice(1));
+  const target = document.getElementById(id);
+  if (target) requestAnimationFrame(() => target.scrollIntoView({ block: "center" }));
+}
+
 function todayISO() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
@@ -262,6 +290,7 @@ function bindGlobalHeader() {
   bindThemeButton();
   $("#signOutButton")?.addEventListener("click", signOut);
   $("#signInButton")?.addEventListener("click", () => renderAuth());
+  $("#quickAddButton")?.addEventListener("click", () => $("#quickAddDialog")?.showModal());
 }
 
 function mapItem(row) {
@@ -428,6 +457,7 @@ async function runWrite(operation) {
 
 function exportSnapshot() {
   const data = {
+    snapshotVersion: 2,
     exportedAt: new Date().toISOString(),
     items: state.items,
     resources: state.resources,
@@ -445,9 +475,154 @@ function exportSnapshot() {
   URL.revokeObjectURL(url);
 }
 
+function compactRecord(record) {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
+}
+
+function validateSnapshot(data) {
+  if (!data || typeof data !== "object") return false;
+  return ["items", "resources", "milestones", "curiosities", "activity"].every(key => Array.isArray(data[key]))
+    && data.hobbyNotes && typeof data.hobbyNotes === "object" && !Array.isArray(data.hobbyNotes);
+}
+
+async function restoreSnapshot(file) {
+  if (!currentUser || !file) return;
+
+  let snapshot;
+  try {
+    snapshot = JSON.parse(await file.text());
+  } catch {
+    alert("That file is not valid JSON.");
+    return;
+  }
+
+  if (!validateSnapshot(snapshot)) {
+    alert("That file does not look like a Hobby Journal snapshot.");
+    return;
+  }
+
+  const confirmed = confirm(
+    "Restore this snapshot?\n\nThis replaces the journal data currently stored for your account. Trophy image files are not embedded in the JSON backup."
+  );
+  if (!confirmed) return;
+
+  const items = snapshot.items.map(item => compactRecord({
+    id: item.id,
+    hobby_id: item.hobbyId,
+    title: item.title,
+    kind: item.kind,
+    status: item.status,
+    progress: Number(item.progress || 0),
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    notes: item.notes || "",
+    next_action: item.nextAction || "",
+    archived: Boolean(item.archived),
+    is_focus: Boolean(item.isFocus),
+    visibility: item.visibility || "public",
+    created_at: item.createdAt,
+    updated_at: item.updatedAt,
+    touched_at: item.touchedAt,
+    completed_at: item.completedAt || null
+  }));
+
+  const resources = snapshot.resources.map(resource => compactRecord({
+    id: resource.id,
+    hobby_id: resource.hobbyId,
+    item_id: resource.itemId || null,
+    label: resource.label,
+    type: resource.type || "",
+    url: resource.url || "",
+    note: resource.note || "",
+    visibility: resource.visibility || "public",
+    created_at: resource.createdAt
+  }));
+
+  const milestones = snapshot.milestones.map(milestone => compactRecord({
+    id: milestone.id,
+    hobby_id: milestone.hobbyId,
+    title: milestone.title,
+    type: milestone.type || "custom",
+    status: milestone.status || "working",
+    target_date: milestone.targetDate || null,
+    achieved_date: milestone.achievedDate || null,
+    note: milestone.note || "",
+    image_path: milestone.imagePath || null,
+    visibility: milestone.visibility || "auto",
+    created_at: milestone.createdAt,
+    updated_at: milestone.updatedAt
+  }));
+
+  const curiosities = snapshot.curiosities.map(curiosity => compactRecord({
+    id: curiosity.id,
+    hobby_id: curiosity.hobbyId || null,
+    title: curiosity.title,
+    url: curiosity.url || "",
+    note: curiosity.note || "",
+    created_at: curiosity.createdAt
+  }));
+
+  const activity = snapshot.activity.map(entry => compactRecord({
+    id: entry.id,
+    hobby_id: entry.hobbyId,
+    item_id: entry.itemId || null,
+    activity_date: entry.date,
+    minutes: Number(entry.minutes || 0),
+    note: entry.note || "",
+    public_heatmap: entry.publicHeatmap !== false,
+    created_at: entry.createdAt
+  }));
+
+  const hobbyNotes = Object.entries(snapshot.hobbyNotes || {}).map(([hobbyId, content]) => ({
+    hobby_id: hobbyId,
+    content: String(content || ""),
+    updated_at: new Date().toISOString()
+  }));
+
+  const requiredText = [
+    ...items.map(x => [x.hobby_id, x.title]),
+    ...resources.map(x => [x.hobby_id, x.label]),
+    ...milestones.map(x => [x.hobby_id, x.title]),
+    ...activity.map(x => [x.hobby_id, x.activity_date])
+  ];
+  if (requiredText.some(parts => parts.some(value => !value))) {
+    alert("The snapshot is missing required data and was not restored.");
+    return;
+  }
+
+  try {
+    const must = async promise => {
+      const result = await promise;
+      if (result.error) throw result.error;
+      return result;
+    };
+
+    await must(db.from("resources").delete().eq("user_id", currentUser.id));
+    await must(db.from("activity").delete().eq("user_id", currentUser.id));
+    await must(db.from("milestones").delete().eq("user_id", currentUser.id));
+    await must(db.from("curiosities").delete().eq("user_id", currentUser.id));
+    await must(db.from("hobby_notes").delete().eq("user_id", currentUser.id));
+    await must(db.from("items").delete().eq("user_id", currentUser.id));
+
+    if (items.length) await must(db.from("items").insert(items));
+    if (resources.length) await must(db.from("resources").insert(resources));
+    if (milestones.length) await must(db.from("milestones").insert(milestones));
+    if (curiosities.length) await must(db.from("curiosities").insert(curiosities));
+    if (activity.length) await must(db.from("activity").insert(activity));
+    if (hobbyNotes.length) await must(db.from("hobby_notes").insert(hobbyNotes));
+
+    await reloadState();
+    alert("Snapshot restored.");
+    renderCurrentPage();
+  } catch (error) {
+    console.error(error);
+    alert(`Restore stopped because of an error: ${error.message}\n\nYou can safely run the same snapshot restore again after fixing the issue.`);
+  }
+}
+
 function headerActions() {
   return `<div class="button-row">
     <button class="quiet-button" id="themeToggle" type="button">Dark</button>
+    ${isOwnerMode() ? `<button class="quiet-button" id="quickAddButton" type="button">+ Add</button>` : ""}
     ${isOwnerMode()
       ? `<button class="text-button" id="signOutButton" type="button">Sign out</button>`
       : `<button class="text-button" id="signInButton" type="button">Sign in</button>`}
@@ -476,6 +651,16 @@ function homeDialogMarkup() {
     </div>
     <p class="form-note">This creates a planned item. If the curiosity has a link, it is kept as a hobby resource.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="promoteCuriosityDialog">Cancel</button><button class="primary-button" type="submit">Move</button></div>
+  </form></dialog>
+
+  <dialog id="quickAddDialog"><form id="quickAddForm" class="dialog-body">
+    <div class="dialog-heading"><h2>Quick add</h2><button type="button" class="dialog-close" data-close="quickAddDialog">×</button></div>
+    <div class="form-grid">
+      <label>What?<select name="action"><option value="curiosity">Curiosity</option><option value="item">Item</option><option value="activity">Activity</option><option value="resource">Resource</option></select></label>
+      <label id="quickAddHobbyField">Hobby<select name="hobbyId">${hobbies.map(hobby => `<option value="${escapeHTML(hobby.id)}">${escapeHTML(hobby.name)}</option>`).join("")}</select></label>
+    </div>
+    <p class="form-note">Choose the kind of entry. The normal lightweight form opens next.</p>
+    <div class="dialog-actions"><button type="button" class="quiet-button" data-close="quickAddDialog">Cancel</button><button class="primary-button" type="submit">Continue</button></div>
   </form></dialog>`;
 }
 
@@ -539,7 +724,11 @@ function renderHome() {
           <h2>Saved</h2>
           <p class="muted copy-small">Changes are stored in Supabase and available on my other devices after I sign in.</p>
           <div class="database-status"><span class="status-dot"></span><span>${escapeHTML(currentUser.email || "Signed in")}</span></div>
-          <button id="exportButton" class="quiet-button" type="button">Download snapshot</button>
+          <div class="saved-actions">
+            <button id="exportButton" class="quiet-button" type="button">Download snapshot</button>
+            <label class="quiet-button file-button">Restore snapshot<input id="restoreInput" type="file" accept="application/json,.json" hidden /></label>
+          </div>
+          <p class="muted copy-small saved-note">Restore replaces the current journal data for this account. Trophy image files remain in Supabase Storage and are not embedded in the JSON.</p>
         </div>` : ""}
       </section>
 
@@ -552,6 +741,10 @@ function renderHome() {
           <div class="section-line"><div><h2>Curiosity inbox</h2><p class="home-section-copy">Things that look interesting before I decide where they belong.</p></div><button id="addCuriosityButton" class="quiet-button" type="button">Add</button></div>
           <div id="curiosityList" class="curiosity-list"></div>
         </div>
+      </section>
+      <section class="rediscover-section">
+        <div class="section-line"><div><h2>Rediscover</h2><p class="home-section-copy">One older thing from the journal, quietly resurfaced.</p></div><span class="muted">Changes daily</span></div>
+        <div id="rediscoverCard"></div>
       </section>` : ""}
     </main>
 
@@ -590,11 +783,11 @@ function renderHome() {
       const haystack = [resource.label, resource.type, resource.note, resource.url].join(" ").toLowerCase();
       if (!haystack.includes(query)) return;
       const parent = resource.itemId ? state.items.find(item => item.id === resource.itemId) : null;
-      results.push({ hobbyId: resource.hobbyId || parent?.hobbyId || "", type: "Resource", title: resource.label, detail: resource.type || (parent ? `For ${parent.title}` : "Hobby resource"), href: resultLink(resource.hobbyId || parent?.hobbyId, parent ? `#item-${parent.id}` : "#resources") });
+      results.push({ hobbyId: resource.hobbyId || parent?.hobbyId || "", type: "Resource", title: resource.label, detail: resource.type || (parent ? `For ${parent.title}` : "Hobby resource"), href: resultLink(resource.hobbyId || parent?.hobbyId, `#resource-${resource.id}`) });
     });
     state.milestones.forEach(milestone => {
       const haystack = [milestone.title, milestone.type, milestone.note].join(" ").toLowerCase();
-      if (haystack.includes(query)) results.push({ hobbyId: milestone.hobbyId, type: "Milestone", title: milestone.title, detail: milestone.status === "achieved" ? "Achieved" : "Working toward", href: resultLink(milestone.hobbyId, "#milestones") });
+      if (haystack.includes(query)) results.push({ hobbyId: milestone.hobbyId, type: "Milestone", title: milestone.title, detail: milestone.status === "achieved" ? "Achieved" : "Working toward", href: resultLink(milestone.hobbyId, `#milestone-${milestone.id}`) });
     });
 
     target.hidden = false;
@@ -627,6 +820,65 @@ function renderHome() {
       return `<a class="recent-touch-row" href="${escapeHTML(resultLink(item.hobbyId, `#item-${item.id}`))}"><span><span class="row-title">${escapeHTML(item.title)}</span><span class="row-meta">${escapeHTML(hobby?.name || item.hobbyId)} · ${itemKindLabel(item.kind)} · ${itemStatusLabel(item.status)}</span></span><span class="muted">${formatDate(item.touchedAt)}</span></a>`;
     }).join("") : `<div class="empty-state compact-empty">Nothing touched yet.</div>`;
 
+    function renderRediscover() {
+      const candidates = [];
+      state.items.filter(item => !item.archived && item.status === "done").forEach(item => {
+        candidates.push({
+          date: item.completedAt || item.touchedAt || item.createdAt,
+          type: itemKindLabel(item.kind),
+          title: item.title,
+          detail: hobbyFor(item.hobbyId)?.name || item.hobbyId,
+          href: resultLink(item.hobbyId, `#item-${item.id}`)
+        });
+      });
+      state.milestones.filter(milestone => milestone.status === "achieved").forEach(milestone => {
+        candidates.push({
+          date: milestone.achievedDate || milestone.createdAt,
+          type: "Milestone",
+          title: milestone.title,
+          detail: hobbyFor(milestone.hobbyId)?.name || milestone.hobbyId,
+          href: resultLink(milestone.hobbyId, `#milestone-${milestone.id}`)
+        });
+      });
+      state.resources.forEach(resource => {
+        const parent = resource.itemId ? state.items.find(item => item.id === resource.itemId) : null;
+        const hobbyId = resource.hobbyId || parent?.hobbyId || "";
+        if (!hobbyId) return;
+        candidates.push({
+          date: resource.createdAt,
+          type: resource.type || "Resource",
+          title: resource.label,
+          detail: hobbyFor(hobbyId)?.name || hobbyId,
+          href: resultLink(hobbyId, `#resource-${resource.id}`)
+        });
+      });
+
+      const target = $("#rediscoverCard");
+      if (!target) return;
+      if (!candidates.length) {
+        target.innerHTML = `<div class="empty-state compact-empty">This will start surfacing things as the journal grows.</div>`;
+        return;
+      }
+
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 14);
+      const older = candidates.filter(candidate => {
+        const date = candidate.date ? new Date(candidate.date) : null;
+        return date && !Number.isNaN(date.getTime()) && date < cutoff;
+      });
+      const pool = older.length ? older : candidates;
+      const seed = todayISO().split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+      const choice = pool[seed % pool.length];
+
+      target.innerHTML = `<a class="rediscover-card" href="${escapeHTML(choice.href)}">
+        <span class="type-tag">${escapeHTML(choice.type)}</span>
+        <span class="rediscover-title">${escapeHTML(choice.title)}</span>
+        <span class="row-meta">${escapeHTML(choice.detail)}${choice.date ? ` · ${formatDate(choice.date)}` : ""}</span>
+      </a>`;
+    }
+
+    renderRediscover();
+
     function renderHomeCuriosity() {
       const target = $("#curiosityList");
       const curiosities = [...state.curiosities].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -652,10 +904,38 @@ function renderHome() {
 
     renderHomeCuriosity();
     $("#exportButton")?.addEventListener("click", exportSnapshot);
+    $("#restoreInput")?.addEventListener("change", async event => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (file) await restoreSnapshot(file);
+    });
     $("#addCuriosityButton")?.addEventListener("click", () => {
       $("#curiosityForm").reset();
       $("#curiosityDialog").showModal();
     });
+
+    const quickForm = $("#quickAddForm");
+    const quickAction = quickForm?.elements.action;
+    const quickHobbyField = $("#quickAddHobbyField");
+    const updateQuickHobbyField = () => {
+      if (quickHobbyField && quickAction) quickHobbyField.hidden = quickAction.value === "curiosity";
+    };
+    quickAction?.addEventListener("change", updateQuickHobbyField);
+    updateQuickHobbyField();
+    quickForm?.addEventListener("submit", event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const action = String(data.get("action"));
+      $("#quickAddDialog")?.close();
+      if (action === "curiosity") {
+        $("#curiosityForm").reset();
+        $("#curiosityDialog").showModal();
+        return;
+      }
+      const hobby = hobbyFor(String(data.get("hobbyId")));
+      if (hobby) window.location.href = `${hobby.page}?quick=${encodeURIComponent(action)}`;
+    });
+
     $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
 
     $("#curiosityForm")?.addEventListener("submit", async event => {
@@ -713,6 +993,12 @@ function renderHome() {
       $("#promoteCuriosityDialog").close();
       renderHome();
     });
+  }
+
+  if (owner && new URLSearchParams(window.location.search).get("quick") === "curiosity") {
+    $("#curiosityForm")?.reset();
+    $("#curiosityDialog")?.showModal();
+    clearQuickQuery();
   }
 
   bindGlobalHeader();
@@ -782,6 +1068,15 @@ function dialogMarkup() {
     <div class="form-grid"><label class="full">Image<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" required /></label></div>
     <p class="form-note">JPEG, PNG, WebP or GIF. Maximum 5 MB.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="trophyImageDialog">Cancel</button><button class="primary-button" type="submit">Upload</button></div>
+  </form></dialog>
+
+  <dialog id="quickAddDialog"><form id="quickAddForm" class="dialog-body">
+    <div class="dialog-heading"><h2>Quick add</h2><button type="button" class="dialog-close" data-close="quickAddDialog">×</button></div>
+    <div class="form-grid">
+      <label class="full">What?<select name="action"><option value="item">Item</option><option value="activity">Activity</option><option value="resource">Resource</option><option value="curiosity">Curiosity</option></select></label>
+    </div>
+    <p class="form-note">Curiosity is kept on the homepage; the other forms open here.</p>
+    <div class="dialog-actions"><button type="button" class="quiet-button" data-close="quickAddDialog">Cancel</button><button class="primary-button" type="submit">Continue</button></div>
   </form></dialog>`;
 }
 
@@ -1044,16 +1339,18 @@ function initHobbyPage(config) {
             <button class="mini-button" data-focus-item="${item.id}">${item.isFocus ? "Unpin" : "Pin"}</button>
             ${item.kind === "project" ? `<button class="mini-button" data-add-resource="${item.id}">Resource</button>` : ""}
             <button class="mini-button" data-edit-item="${item.id}">Edit</button>
+            <button class="text-button" data-copy-link="item-${item.id}">Link</button>
             <button class="text-button" data-archive-item="${item.id}">Archive</button>
           </div>` : ""}
         </div>
         ${item.kind === "project" ? `<div class="resource-shelf">
           <div class="resource-heading"><h4>Resources</h4></div>
-          ${resources.length ? resources.map(resource => `<div class="resource-row"><div>${resource.url ? `<a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="resource-title-static">${escapeHTML(resource.label)}</span>`}${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<div class="row-actions"><button class="text-button" data-edit-resource="${resource.id}">Edit</button><button class="text-button danger" data-delete-resource="${resource.id}">Remove</button></div>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
+          ${resources.length ? resources.map(resource => `<div class="resource-row" id="resource-${resource.id}"><div>${resource.url ? `<a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="resource-title-static">${escapeHTML(resource.label)}</span>`}${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<div class="row-actions"><button class="text-button" data-edit-resource="${resource.id}">Edit</button><button class="text-button" data-copy-link="resource-${resource.id}">Link</button><button class="text-button danger" data-delete-resource="${resource.id}">Remove</button></div>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
         </div>` : ""}
       </article>`;
     }).join("");
 
+    scrollToCurrentHash();
     if (!owner) return;
     bindItemActionButtons();
     bindItemVisibilityControls();
@@ -1073,6 +1370,7 @@ function initHobbyPage(config) {
       if (resource?.itemId) await db.from("items").update({ touched_at: new Date().toISOString() }).eq("id", resource.itemId);
       await reloadState(); refresh();
     }));
+    bindCopyLinkButtons();
   }
 
   function bindItemVisibilityControls() {
@@ -1111,6 +1409,15 @@ function initHobbyPage(config) {
     });
   }
 
+  function bindCopyLinkButtons() {
+    if (!owner) return;
+    $$('[data-copy-link]').forEach(button => {
+      if (button.dataset.bound) return;
+      button.dataset.bound = "1";
+      button.addEventListener("click", () => copyShareLink(button.dataset.copyLink));
+    });
+  }
+
   function resourceVisibilityControl(resource) {
     if (!owner) return "";
     return `<select class="visibility-select" data-resource-visibility="${resource.id}" aria-label="Visibility for ${escapeHTML(resource.label)}">
@@ -1133,9 +1440,10 @@ function initHobbyPage(config) {
         ${resource.url ? `<a class="library-resource-title" href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="library-resource-title resource-title-static">${escapeHTML(resource.label)}</span>`}
         ${resource.note ? `<p class="row-note">${escapeHTML(resource.note)}</p>` : ""}
       </div>
-      ${owner ? `<div class="row-actions"><button class="mini-button" data-edit-hobby-resource="${resource.id}" type="button">Edit</button><button class="text-button danger" data-delete-hobby-resource="${resource.id}" type="button">Delete</button></div>` : ""}
+      ${owner ? `<div class="row-actions"><button class="mini-button" data-edit-hobby-resource="${resource.id}" type="button">Edit</button><button class="text-button" data-copy-link="resource-${resource.id}" type="button">Link</button><button class="text-button danger" data-delete-hobby-resource="${resource.id}" type="button">Delete</button></div>` : ""}
     </article>`).join("") : `<div class="empty-state">${query ? "No matching resources." : "No hobby resources saved yet."}</div>`;
 
+    scrollToCurrentHash();
     if (!owner) return;
     $$("[data-resource-visibility]").forEach(select => select.addEventListener("change", async () => {
       await runWrite(() => db.from("resources").update({ visibility: select.value }).eq("id", select.dataset.resourceVisibility));
@@ -1153,6 +1461,7 @@ function initHobbyPage(config) {
       await reloadState();
       refresh();
     }));
+    bindCopyLinkButtons();
   }
 
   async function renderMilestones() {
@@ -1163,21 +1472,22 @@ function initHobbyPage(config) {
     target.innerHTML = `<div class="milestone-groups">
       ${working.length || owner ? `<div>
         <div class="subsection-heading"><h3>Working toward</h3><span class="muted">${working.length}</span></div>
-        <div class="milestone-list">${working.length ? working.map(m => `<article class="milestone-row"><div class="milestone-top"><div class="row-main"><div class="row-labels">${milestoneVisibilityControl(m)}</div><div class="row-title">${escapeHTML(m.title)}</div><div class="row-meta">${escapeHTML(m.type)}${m.targetDate ? ` · target ${formatDate(m.targetDate)}` : ""}</div>${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}</div>${owner ? `<div class="row-actions"><button class="mini-button" data-achieve-milestone="${m.id}">Mark achieved</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}</div></article>`).join("") : `<div class="empty-state compact-empty">No milestones in progress.</div>`}</div>
+        <div class="milestone-list">${working.length ? working.map(m => `<article class="milestone-row" id="milestone-${m.id}"><div class="milestone-top"><div class="row-main"><div class="row-labels">${milestoneVisibilityControl(m)}</div><div class="row-title">${escapeHTML(m.title)}</div><div class="row-meta">${escapeHTML(m.type)}${m.targetDate ? ` · target ${formatDate(m.targetDate)}` : ""}</div>${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}</div>${owner ? `<div class="row-actions"><button class="mini-button" data-achieve-milestone="${m.id}">Mark achieved</button><button class="text-button" data-copy-link="milestone-${m.id}">Link</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}</div></article>`).join("") : `<div class="empty-state compact-empty">No milestones in progress.</div>`}</div>
       </div>` : ""}
       <div class="trophy-section">
         <div class="subsection-heading"><h3>Trophy case</h3><span class="muted">${achieved.length}</span></div>
-        <div class="trophy-grid">${achieved.length ? achieved.map(m => `<article class="trophy-card">
+        <div class="trophy-grid">${achieved.length ? achieved.map(m => `<article class="trophy-card" id="milestone-${m.id}">
           ${m.imagePath ? `<div class="trophy-image-wrap"><div class="trophy-image-placeholder" data-trophy-image="${escapeHTML(m.imagePath)}"></div></div>` : `<div class="trophy-mark">◇</div>`}
           ${owner ? `<div class="row-labels trophy-visibility">${milestoneVisibilityControl(m)}</div>` : ""}
           <div class="trophy-title">${escapeHTML(m.title)}</div>
           <div class="row-meta">${formatDate(m.achievedDate)} · ${escapeHTML(m.type)}</div>
           ${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}
-          ${owner ? `<div class="trophy-actions"><button class="mini-button" data-trophy-image-button="${m.id}">${m.imagePath ? "Replace image" : "Add image"}</button><button class="text-button" data-reopen-milestone="${m.id}">Move back</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}
+          ${owner ? `<div class="trophy-actions"><button class="mini-button" data-trophy-image-button="${m.id}">${m.imagePath ? "Replace image" : "Add image"}</button><button class="text-button" data-reopen-milestone="${m.id}">Move back</button><button class="text-button" data-copy-link="milestone-${m.id}">Link</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}
         </article>`).join("") : `<div class="empty-state trophy-empty">Nothing here yet.</div>`}</div>
       </div>
     </div>`;
 
+    scrollToCurrentHash();
     if (owner) {
       $$('[data-milestone-visibility]').forEach(select => select.addEventListener("change", async () => {
         await runWrite(() => db.from("milestones").update({ visibility: select.value }).eq("id", select.dataset.milestoneVisibility));
@@ -1204,6 +1514,7 @@ function initHobbyPage(config) {
         form.elements.milestoneId.value = button.dataset.trophyImageButton;
         $("#trophyImageDialog").showModal();
       }));
+      bindCopyLinkButtons();
     }
 
     for (const placeholder of $$('[data-trophy-image]')) {
@@ -1398,6 +1709,16 @@ function initHobbyPage(config) {
     $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
     $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
 
+    $("#quickAddForm")?.addEventListener("submit", event => {
+      event.preventDefault();
+      const action = String(new FormData(event.currentTarget).get("action"));
+      $("#quickAddDialog")?.close();
+      if (action === "item") openItem();
+      else if (action === "activity") openActivity();
+      else if (action === "resource") openResource();
+      else if (action === "curiosity") window.location.href = "../index.html?quick=curiosity";
+    });
+
     $("#itemForm").addEventListener("submit", async event => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
@@ -1538,6 +1859,14 @@ function initHobbyPage(config) {
       $("#trophyImageDialog").close();
       refresh();
     });
+
+    const quickAction = new URLSearchParams(window.location.search).get("quick");
+    if (["item", "activity", "resource"].includes(quickAction)) {
+      if (quickAction === "item") openItem();
+      if (quickAction === "activity") openActivity();
+      if (quickAction === "resource") openResource();
+      clearQuickQuery();
+    }
   }
 
   refresh();

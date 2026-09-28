@@ -840,3 +840,76 @@ code {
   .search-result-row,
   .recent-touch-row { flex-direction: column; gap: 5px; }
 }
+
+
+/* v9: final convenience pass — quick add, restore, stable links, rediscover */
+.saved-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.saved-note {
+  margin: 10px 0 0;
+  max-width: 360px;
+}
+
+#quickAddHobbyField[hidden] {
+  display: none;
+}
+
+.rediscover-section {
+  margin-top: 48px;
+  padding-top: 30px;
+  border-top: 1px solid var(--line);
+}
+
+.rediscover-card {
+  display: grid;
+  gap: 7px;
+  width: min(100%, 520px);
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+.rediscover-card:hover {
+  border-color: var(--line-strong);
+}
+
+.rediscover-title {
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.item-row,
+.resource-row,
+.library-resource-row,
+.milestone-row,
+.trophy-card {
+  scroll-margin-top: 86px;
+}
+
+.item-row:target,
+.resource-row:target,
+.library-resource-row:target,
+.milestone-row:target,
+.trophy-card:target {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+}
+
+@media (max-width: 560px) {
+  .saved-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .saved-actions > * {
+    width: 100%;
+  }
+}

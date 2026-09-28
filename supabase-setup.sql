@@ -1,15 +1,40 @@
--- Hobby Journal — fresh Supabase setup
--- For a NEW Supabase project/database with no existing hobby-journal tables.
--- Run this entire file once in Supabase -> SQL Editor.
+-- Hobby Journal — RESET + fresh Supabase setup
+-- IMPORTANT: This file DELETES all existing Hobby Journal data in the tables below.
+-- Use this only when you do not need to preserve existing hobby-journal data.
 --
--- This schema supports:
--- - public read-only journal + private owner mode
--- - learning/project items
--- - hobby-level and item/project resources
--- - editable activity logs + public heatmap summaries
--- - milestones/trophy case + private image storage
--- - homepage Curiosity Inbox (no hobby required)
--- - private per-hobby notes
+-- It does NOT delete Supabase Auth users or unrelated Supabase tables.
+-- Run this entire file once in Supabase -> SQL Editor.
+
+begin;
+
+-- ============================================================
+-- REMOVE PREVIOUS HOBBY-JOURNAL STORAGE POLICIES
+-- These live on Supabase's storage.objects table, so they must be
+-- removed explicitly before recreating our app schema.
+-- ============================================================
+
+drop policy if exists "read own milestone images" on storage.objects;
+drop policy if exists "upload own milestone images" on storage.objects;
+drop policy if exists "delete own milestone images" on storage.objects;
+drop policy if exists "read public milestone images" on storage.objects;
+
+-- ============================================================
+-- REMOVE PREVIOUS HOBBY-JOURNAL TABLES
+-- CASCADE removes their old triggers/policies/index dependencies.
+-- ============================================================
+
+drop table if exists public.resources cascade;
+drop table if exists public.activity cascade;
+drop table if exists public.milestones cascade;
+drop table if exists public.curiosities cascade;
+drop table if exists public.hobby_notes cascade;
+drop table if exists public.items cascade;
+
+drop function if exists public.set_updated_at() cascade;
+
+-- ============================================================
+-- CREATE THE CURRENT SCHEMA
+-- ============================================================
 
 create extension if not exists pgcrypto;
 
@@ -412,3 +437,5 @@ using (
       )
   )
 );
+
+commit;

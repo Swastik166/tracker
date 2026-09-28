@@ -1,84 +1,83 @@
-# Tracking hobbies — v8
+# Things I'm Tryin — final hobby journal
 
-A quiet personal hobby journal hosted on GitHub Pages and backed by Supabase.
+A quiet hobby journal hosted on GitHub Pages and backed by Supabase.
 
-## Public view
+## What is included
 
-Visitors do not need an account. They can see content you have chosen to make public:
+### Public view
+Visitors do not need an account. They can see:
 
-- hobby pages from `hobbies.js`
-- public learning/project items
-- public project and hobby resources
-- public/achieved milestones and the trophy case
-- the activity heatmap (date + minutes only)
-- public history
-- homepage search across content that is public to them
+- the hobbies listed in `hobbies.js`
+- items marked Public
+- resources attached to public items
+- public hobby-level resources
+- public milestones and the trophy case
+- the public activity heatmap (date + minutes only)
+- public history generated from shared completions and milestones
 
-Visitors cannot edit anything.
-
-## Owner view
-
-After signing in you can also use:
+### Owner view
+After signing in, you also get:
 
 - add/edit/archive/delete controls
 - private items and resources
 - Current Focus
 - private hobby notes
-- editable/deletable activity entries
-- the global Curiosity Inbox on the homepage
-- Recently Touched on the homepage
-- search across both public and private loaded content
-- archive and backups
+- detailed/editable activity
+- Curiosity Inbox on the homepage
+- Recently Touched
+- global search
+- JSON snapshot download + restore
+- Quick Add from the header
+- stable copyable links to items, resources, and milestones
+- Rediscover, which quietly resurfaces one older entry each day
 
-## v8 changes
+## Quick Add
 
-### Curiosity is global
+When signed in, use `+ Add` in the header.
 
-Curiosity no longer belongs to a hobby when it is captured. The private Curiosity Inbox now lives on the homepage. A curiosity contains only a title, optional link, and optional note.
+From the homepage you can choose Curiosity, Item, Activity, or Resource. For hobby-specific entries, choose the hobby and the normal form opens there.
 
-Use **Move to hobby** to choose a hobby and whether it should become a Learning or Project item. It becomes a Planned item. If it has a saved link, that link is preserved as a hobby-level resource.
+From a hobby page, Item/Activity/Resource opens locally. Curiosity sends you to the homepage Curiosity form.
 
-### Global search
+## Backups
 
-The homepage search finds learning/project items, resources, and milestones across all hobbies. Signed-out visitors only search content Supabase permits them to read; the owner searches the full loaded owner state.
+On the homepage, the Saved panel has:
 
-### Recently touched
+- **Download snapshot** — downloads your database content as JSON.
+- **Restore snapshot** — replaces the current journal data for your account with a previously downloaded snapshot.
 
-The owner homepage shows the five most recently touched non-archived items. This is generated from existing `touched_at` data and requires no extra logging.
+Trophy image *files* are stored separately in Supabase Storage and are not embedded in the JSON. The snapshot keeps their stored paths, so restoring within the same Supabase project can reconnect them if the files are still present.
 
-### Resources
+## Shareable links
 
-Resource URLs are optional. A resource can now be a book, person, place, app, reference, or anything else even when there is no web link. The Type field stays free-form but offers common suggestions.
+When signed in, Items, Resources, and Milestones have a small **Link** action. It copies a direct URL using a stable page anchor. Public visitors can open the link if that entry is public.
 
-### Completed items
+## Supabase
 
-`Done` items remain in the normal Learning & Projects list. Archive remains a separate deliberate action.
+`supabase-setup.sql` contains the complete current schema, RLS policies, and milestone-image Storage configuration.
 
-## Database upgrades
+If your Supabase project is already configured and working, **do not rerun it** just to deploy this frontend revision. v9 does not require a schema migration.
 
-For an existing v7 database, run `supabase-v8-migration.sql` once.
+The setup file begins by dropping this hobby journal's app tables so it can also be used to deliberately reset a test/empty project. Running it on a populated journal will erase those journal rows.
 
-If your database is still on v6, run these in order:
+Never put a Supabase secret/service-role key or database password into `config.js`. The Project URL and browser publishable key are expected to be in a public GitHub Pages frontend.
 
-1. `supabase-v7-migration.sql`
-2. `supabase-v8-migration.sql`
+## Adding a hobby
 
-For a brand-new Supabase project, use only the current `supabase-setup.sql`.
+1. Add the hobby to `hobbies.js`.
+2. Copy `hobbies/_template.html`.
+3. Rename it, for example `hobbies/woodworking.html`.
+4. Change `window.HOBBY_PAGE_ID` in that file to the matching hobby ID.
+5. Update its `<title>`.
 
-## Files
+Everything entered through the hobby page is stored in Supabase.
+
+## Main files
 
 - `index.html` — homepage shell
-- `styles.css` — shared design
-- `app.js` — UI and Supabase operations
+- `styles.css` — shared styling
+- `app.js` — UI, auth, database reads/writes, backup/restore
 - `config.js` — Supabase browser configuration
 - `hobbies.js` — hobby registry
-- `hobbies/*.html` — one small page per hobby
-- `supabase-setup.sql` — complete schema for a fresh database
-- `supabase-v7-migration.sql` — adds hobby-level resources to a v6 database
-- `supabase-v8-migration.sql` — makes Curiosity global for a v7 database
-
-## v8.1 fixes
-
-- Curiosity Inbox entries can be saved without assigning a hobby. Existing databases must run `supabase-v8.1-migration.sql` once so `curiosities.hobby_id` is nullable.
-- Links no longer require a scheme. `youtube.com`, `www.example.com/page`, and full `https://...` URLs are accepted. The site stores shorthand links as normalized HTTPS URLs.
-- Empty links remain valid for both curiosities and resources.
+- `hobbies/*.html` — one lightweight page per hobby
+- `supabase-setup.sql` — complete database/security setup
