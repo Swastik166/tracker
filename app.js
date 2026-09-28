@@ -1808,34 +1808,67 @@ function initHobbyPage(config) {
 
     $("#milestoneForm").addEventListener("submit", async event => {
       event.preventDefault();
-      const data = new FormData(event.currentTarget);
-      const status = String(data.get("status"));
+
+      const form = event.currentTarget;
+      const submitButton = form.querySelector('button[type="submit"]');
+      const data = new FormData(form);
+      const title = String(data.get("title") || "").trim();
+      const type = String(data.get("type") || "custom");
+      const status = String(data.get("status") || "working");
       const date = String(data.get("date") || "");
+      const note = String(data.get("note") || "").trim();
       const file = data.get("image");
+
+      if (!title) {
+        alert("Enter a milestone name.");
+        return;
+      }
+
       let imagePath = "";
+      let inserted = false;
+      const originalButtonText = submitButton?.textContent || "Save";
+
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Saving…";
+      }
+
       try {
-        if (file instanceof File && file.size) imagePath = await uploadMilestoneImage(file, hobbyId);
-        const result = await db.from("milestones").insert({
+        if (file instanceof File && file.size > 0) {
+          imagePath = await uploadMilestoneImage(file, hobbyId);
+        }
+
+        const { error } = await db.from("milestones").insert({
           hobby_id: hobbyId,
-          title: String(data.get("title")).trim(),
-          type: String(data.get("type")),
+          title,
+          type,
           status,
           target_date: status === "working" && date ? date : null,
           achieved_date: status === "achieved" ? (date || todayISO()) : null,
-          note: String(data.get("note") || "").trim(),
+          note,
           image_path: imagePath || null,
           visibility: "auto"
         });
-        if (result.error) throw result.error;
+
+        if (error) throw error;
+        inserted = true;
+
+        await reloadState();
+        form.reset();
+        $("#milestoneDialog")?.close();
+        refresh();
       } catch (error) {
-        if (imagePath) await deleteMilestoneImage(imagePath);
+        if (!inserted && imagePath) {
+          await deleteMilestoneImage(imagePath);
+        }
+        console.error("Could not save milestone:", error);
         showDataError(error);
-        return;
+      } finally {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = originalButtonText;
+        }
       }
-      await reloadState();
-      event.currentTarget.reset();
-      $("#milestoneDialog").close();
-      refresh();
     });
 
     $("#trophyImageForm").addEventListener("submit", async event => {
