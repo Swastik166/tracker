@@ -22,5 +22,11 @@ window.HOBBIES = [
     name: "Reading",
     page: "hobbies/reading.html",
     description: "Reading records and maybe some thoughts."
+  },
+  {
+    id: "chess",
+    name: "Chess",
+    page: "hobbies/chess.html",
+    description: "Cheeess."
   }
 ];
