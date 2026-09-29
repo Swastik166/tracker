@@ -7,6 +7,7 @@ let state = emptyState();
 let editingItemId = null;
 let editingActivityId = null;
 let editingResourceId = null;
+let editingMilestoneId = null;
 const signedImageCache = new Map();
 
 function emptyState() {
@@ -1049,7 +1050,10 @@ function dialogMarkup() {
   </form></dialog>
 
   <dialog id="milestoneDialog"><form id="milestoneForm" class="dialog-body">
-    <div class="dialog-heading"><h2>Add milestone</h2><button type="button" class="dialog-close" data-close="milestoneDialog">×</button></div>
+    <div class="dialog-heading">
+      <h2 id="milestoneDialogTitle">Add milestone</h2>
+      <button type="button" class="dialog-close" data-close="milestoneDialog">×</button>
+    </div>
     <div class="form-grid">
       <label>Milestone<input name="title" required /></label>
       <label>Type<select name="type"><option value="first">First</option><option value="completion">Completion</option><option value="personal-best">Personal best</option><option value="consistency">Consistency</option><option value="project">Project</option><option value="custom">Custom</option></select></label>
@@ -1466,60 +1470,355 @@ function initHobbyPage(config) {
 
   async function renderMilestones() {
     const milestones = hobbyMilestones();
+
     const working = milestones.filter(x => x.status === "working");
-    const achieved = milestones.filter(x => x.status === "achieved").sort((a, b) => String(b.achievedDate).localeCompare(String(a.achievedDate)));
+
+    const achieved = milestones
+      .filter(x => x.status === "achieved")
+      .sort((a, b) =>
+        String(b.achievedDate).localeCompare(String(a.achievedDate))
+      );
+
     const target = $("#milestoneList");
-    target.innerHTML = `<div class="milestone-groups">
-      ${working.length || owner ? `<div>
-        <div class="subsection-heading"><h3>Working toward</h3><span class="muted">${working.length}</span></div>
-        <div class="milestone-list">${working.length ? working.map(m => `<article class="milestone-row" id="milestone-${m.id}"><div class="milestone-top"><div class="row-main"><div class="row-labels">${milestoneVisibilityControl(m)}</div><div class="row-title">${escapeHTML(m.title)}</div><div class="row-meta">${escapeHTML(m.type)}${m.targetDate ? ` · target ${formatDate(m.targetDate)}` : ""}</div>${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}</div>${owner ? `<div class="row-actions"><button class="mini-button" data-achieve-milestone="${m.id}">Mark achieved</button><button class="text-button" data-copy-link="milestone-${m.id}">Link</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}</div></article>`).join("") : `<div class="empty-state compact-empty">No milestones in progress.</div>`}</div>
-      </div>` : ""}
-      <div class="trophy-section">
-        <div class="subsection-heading"><h3>Trophy case</h3><span class="muted">${achieved.length}</span></div>
-        <div class="trophy-grid">${achieved.length ? achieved.map(m => `<article class="trophy-card" id="milestone-${m.id}">
-          ${m.imagePath ? `<div class="trophy-image-wrap"><div class="trophy-image-placeholder" data-trophy-image="${escapeHTML(m.imagePath)}"></div></div>` : `<div class="trophy-mark">◇</div>`}
-          ${owner ? `<div class="row-labels trophy-visibility">${milestoneVisibilityControl(m)}</div>` : ""}
-          <div class="trophy-title">${escapeHTML(m.title)}</div>
-          <div class="row-meta">${formatDate(m.achievedDate)} · ${escapeHTML(m.type)}</div>
-          ${m.note ? `<p class="row-note">${escapeHTML(m.note)}</p>` : ""}
-          ${owner ? `<div class="trophy-actions"><button class="mini-button" data-trophy-image-button="${m.id}">${m.imagePath ? "Replace image" : "Add image"}</button><button class="text-button" data-reopen-milestone="${m.id}">Move back</button><button class="text-button" data-copy-link="milestone-${m.id}">Link</button><button class="text-button danger" data-delete-milestone="${m.id}">Delete</button></div>` : ""}
-        </article>`).join("") : `<div class="empty-state trophy-empty">Nothing here yet.</div>`}</div>
+
+    target.innerHTML = `
+      <div class="milestone-groups">
+
+        ${working.length || owner ? `
+          <div>
+            <div class="subsection-heading">
+              <h3>Working toward</h3>
+              <span class="muted">${working.length}</span>
+            </div>
+
+            <div class="milestone-list">
+              ${
+                working.length
+                  ? working.map(m => `
+                    <article class="milestone-row" id="milestone-${m.id}">
+                      <div class="milestone-top">
+
+                        <div class="row-main">
+                          <div class="row-labels">
+                            ${milestoneVisibilityControl(m)}
+                          </div>
+
+                          <div class="row-title">
+                            ${escapeHTML(m.title)}
+                          </div>
+
+                          <div class="row-meta">
+                            ${escapeHTML(m.type)}
+                            ${
+                              m.targetDate
+                                ? ` · target ${formatDate(m.targetDate)}`
+                                : ""
+                            }
+                          </div>
+
+                          ${
+                            m.note
+                              ? `<p class="row-note">${escapeHTML(m.note)}</p>`
+                              : ""
+                          }
+                        </div>
+
+                        ${
+                          owner
+                            ? `
+                              <div class="row-actions">
+                                <button
+                                  class="mini-button"
+                                  data-edit-milestone="${m.id}"
+                                  type="button"
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  class="mini-button"
+                                  data-achieve-milestone="${m.id}"
+                                  type="button"
+                                >
+                                  Mark achieved
+                                </button>
+
+                                <button
+                                  class="text-button"
+                                  data-copy-link="milestone-${m.id}"
+                                  type="button"
+                                >
+                                  Link
+                                </button>
+
+                                <button
+                                  class="text-button danger"
+                                  data-delete-milestone="${m.id}"
+                                  type="button"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            `
+                            : ""
+                        }
+
+                      </div>
+                    </article>
+                  `).join("")
+                  : `
+                    <div class="empty-state compact-empty">
+                      No milestones in progress.
+                    </div>
+                  `
+              }
+            </div>
+          </div>
+        ` : ""}
+
+        <div class="trophy-section">
+
+          <div class="subsection-heading">
+            <h3>Trophy case</h3>
+            <span class="muted">${achieved.length}</span>
+          </div>
+
+          <div class="trophy-grid">
+            ${
+              achieved.length
+                ? achieved.map(m => `
+                  <article class="trophy-card" id="milestone-${m.id}">
+
+                    ${
+                      m.imagePath
+                        ? `
+                          <div class="trophy-image-wrap">
+                            <div
+                              class="trophy-image-placeholder"
+                              data-trophy-image="${escapeHTML(m.imagePath)}"
+                            ></div>
+                          </div>
+                        `
+                        : `<div class="trophy-mark">◇</div>`
+                    }
+
+                    ${
+                      owner
+                        ? `
+                          <div class="row-labels trophy-visibility">
+                            ${milestoneVisibilityControl(m)}
+                          </div>
+                        `
+                        : ""
+                    }
+
+                    <div class="trophy-title">
+                      ${escapeHTML(m.title)}
+                    </div>
+
+                    <div class="row-meta">
+                      ${formatDate(m.achievedDate)} · ${escapeHTML(m.type)}
+                    </div>
+
+                    ${
+                      m.note
+                        ? `<p class="row-note">${escapeHTML(m.note)}</p>`
+                        : ""
+                    }
+
+                    ${
+                      owner
+                        ? `
+                          <div class="trophy-actions">
+
+                            <button
+                              class="mini-button"
+                              data-edit-milestone="${m.id}"
+                              type="button"
+                            >
+                              Edit
+                            </button>
+
+                            <button
+                              class="mini-button"
+                              data-trophy-image-button="${m.id}"
+                              type="button"
+                            >
+                              ${m.imagePath ? "Replace image" : "Add image"}
+                            </button>
+
+                            <button
+                              class="text-button"
+                              data-reopen-milestone="${m.id}"
+                              type="button"
+                            >
+                              Move back
+                            </button>
+
+                            <button
+                              class="text-button"
+                              data-copy-link="milestone-${m.id}"
+                              type="button"
+                            >
+                              Link
+                            </button>
+
+                            <button
+                              class="text-button danger"
+                              data-delete-milestone="${m.id}"
+                              type="button"
+                            >
+                              Delete
+                            </button>
+
+                          </div>
+                        `
+                        : ""
+                    }
+
+                  </article>
+                `).join("")
+                : `
+                  <div class="empty-state trophy-empty">
+                    Nothing here yet.
+                  </div>
+                `
+            }
+          </div>
+        </div>
       </div>
-    </div>`;
+    `;
 
     scrollToCurrentHash();
+
     if (owner) {
-      $$('[data-milestone-visibility]').forEach(select => select.addEventListener("change", async () => {
-        await runWrite(() => db.from("milestones").update({ visibility: select.value }).eq("id", select.dataset.milestoneVisibility));
-        await reloadState(); refresh();
-      }));
-      $$('[data-achieve-milestone]').forEach(button => button.addEventListener("click", async () => {
-        await runWrite(() => db.from("milestones").update({ status: "achieved", achieved_date: todayISO() }).eq("id", button.dataset.achieveMilestone));
-        await reloadState(); refresh();
-      }));
-      $$('[data-reopen-milestone]').forEach(button => button.addEventListener("click", async () => {
-        await runWrite(() => db.from("milestones").update({ status: "working", achieved_date: null }).eq("id", button.dataset.reopenMilestone));
-        await reloadState(); refresh();
-      }));
-      $$('[data-delete-milestone]').forEach(button => button.addEventListener("click", async () => {
-        const milestone = state.milestones.find(x => x.id === button.dataset.deleteMilestone);
-        if (!confirm("Delete this milestone?")) return;
-        if (milestone?.imagePath) await deleteMilestoneImage(milestone.imagePath);
-        await runWrite(() => db.from("milestones").delete().eq("id", button.dataset.deleteMilestone));
-        await reloadState(); refresh();
-      }));
-      $$('[data-trophy-image-button]').forEach(button => button.addEventListener("click", () => {
-        const form = $("#trophyImageForm");
-        form.reset();
-        form.elements.milestoneId.value = button.dataset.trophyImageButton;
-        $("#trophyImageDialog").showModal();
-      }));
+
+      // EDIT
+      $$("[data-edit-milestone]").forEach(button => {
+        button.addEventListener("click", () => {
+          const milestone = state.milestones.find(
+            x => x.id === button.dataset.editMilestone
+          );
+
+          if (milestone) {
+            openMilestone(milestone);
+          }
+        });
+      });
+
+      // VISIBILITY
+      $$("[data-milestone-visibility]").forEach(select => {
+        select.addEventListener("change", async () => {
+          await runWrite(() =>
+            db
+              .from("milestones")
+              .update({
+                visibility: select.value
+              })
+              .eq("id", select.dataset.milestoneVisibility)
+          );
+
+          await reloadState();
+          refresh();
+        });
+      });
+
+      // MARK ACHIEVED
+      $$("[data-achieve-milestone]").forEach(button => {
+        button.addEventListener("click", async () => {
+          await runWrite(() =>
+            db
+              .from("milestones")
+              .update({
+                status: "achieved",
+                achieved_date: todayISO()
+              })
+              .eq("id", button.dataset.achieveMilestone)
+          );
+
+          await reloadState();
+          refresh();
+        });
+      });
+
+      // MOVE BACK
+      $$("[data-reopen-milestone]").forEach(button => {
+        button.addEventListener("click", async () => {
+          await runWrite(() =>
+            db
+              .from("milestones")
+              .update({
+                status: "working",
+                achieved_date: null
+              })
+              .eq("id", button.dataset.reopenMilestone)
+          );
+
+          await reloadState();
+          refresh();
+        });
+      });
+
+      // DELETE
+      $$("[data-delete-milestone]").forEach(button => {
+        button.addEventListener("click", async () => {
+          const milestone = state.milestones.find(
+            x => x.id === button.dataset.deleteMilestone
+          );
+
+          if (!milestone) return;
+
+          if (!confirm(`Delete milestone “${milestone.title}”?`)) {
+            return;
+          }
+
+          if (milestone.imagePath) {
+            await deleteMilestoneImage(milestone.imagePath);
+          }
+
+          await runWrite(() =>
+            db
+              .from("milestones")
+              .delete()
+              .eq("id", milestone.id)
+          );
+
+          await reloadState();
+          refresh();
+        });
+      });
+
+      // TROPHY IMAGE
+      $$("[data-trophy-image-button]").forEach(button => {
+        button.addEventListener("click", () => {
+          const form = $("#trophyImageForm");
+
+          form.reset();
+          form.elements.milestoneId.value =
+            button.dataset.trophyImageButton;
+
+          $("#trophyImageDialog").showModal();
+        });
+      });
+
       bindCopyLinkButtons();
     }
 
-    for (const placeholder of $$('[data-trophy-image]')) {
-      const url = await getSignedImageUrl(placeholder.dataset.trophyImage);
-      if (url) placeholder.innerHTML = `<img src="${escapeHTML(url)}" alt="Milestone image" loading="lazy" />`;
+    // LOAD PRIVATE TROPHY IMAGES
+    for (const placeholder of $$("[data-trophy-image]")) {
+      const url = await getSignedImageUrl(
+        placeholder.dataset.trophyImage
+      );
+
+      if (url) {
+        placeholder.innerHTML = `
+          <img
+            src="${escapeHTML(url)}"
+            alt="Milestone image"
+            loading="lazy"
+          />
+        `;
+      }
     }
   }
 
@@ -1662,6 +1961,38 @@ function initHobbyPage(config) {
     $("#resourceDialog").showModal();
   }
 
+  function openMilestone(milestone = null) {
+    const form = $("#milestoneForm");
+    if (!form) return;
+
+    editingMilestoneId = milestone?.id || null;
+
+    form.reset();
+
+    $("#milestoneDialogTitle").textContent =
+      milestone ? "Edit milestone" : "Add milestone";
+
+    if (milestone) {
+      form.elements.title.value = milestone.title || "";
+      form.elements.type.value = milestone.type || "custom";
+      form.elements.status.value = milestone.status || "working";
+
+      form.elements.date.value =
+        milestone.status === "achieved"
+          ? (milestone.achievedDate || "")
+          : (milestone.targetDate || "");
+
+      form.elements.note.value = milestone.note || "";
+    } else {
+      form.elements.type.value = "custom";
+      form.elements.status.value = "working";
+      form.elements.date.value = "";
+      form.elements.note.value = "";
+    }
+
+    $("#milestoneDialog").showModal();
+  }
+
   function refresh() {
     renderSummary();
     renderFocus();
@@ -1706,7 +2037,9 @@ function initHobbyPage(config) {
     $("#addItemButton2").addEventListener("click", () => openItem());
     $("#logActivityButton").addEventListener("click", () => openActivity());
     $("#addHobbyResourceButton").addEventListener("click", () => openResource());
-    $("#addMilestoneButton").addEventListener("click", () => $("#milestoneDialog").showModal());
+    $("#addMilestoneButton").addEventListener("click", () => {
+      openMilestone();
+    });
     $$('[data-close]').forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close)?.close()));
 
     $("#quickAddForm")?.addEventListener("submit", event => {
@@ -1809,9 +2142,17 @@ function initHobbyPage(config) {
     $("#milestoneForm").addEventListener("submit", async event => {
       event.preventDefault();
 
+      // Keep a permanent reference because event.currentTarget
+      // should not be relied on after await.
       const form = event.currentTarget;
       const submitButton = form.querySelector('button[type="submit"]');
+
       const data = new FormData(form);
+
+      const milestoneBeingEdited = editingMilestoneId
+        ? state.milestones.find(x => x.id === editingMilestoneId)
+        : null;
+
       const title = String(data.get("title") || "").trim();
       const type = String(data.get("type") || "custom");
       const status = String(data.get("status") || "working");
@@ -1824,52 +2165,148 @@ function initHobbyPage(config) {
         return;
       }
 
-      let imagePath = "";
-      let inserted = false;
-      const originalButtonText = submitButton?.textContent || "Save";
+      const originalButtonText =
+        submitButton?.textContent || "Save";
 
       if (submitButton) {
         submitButton.disabled = true;
-        submitButton.textContent = "Saving…";
+        submitButton.textContent =
+          editingMilestoneId ? "Updating…" : "Saving…";
       }
 
+      let newImagePath = "";
+      let databaseSaved = false;
+
       try {
+
+        // If a new image was selected, upload it first.
         if (file instanceof File && file.size > 0) {
-          imagePath = await uploadMilestoneImage(file, hobbyId);
+          newImagePath = await uploadMilestoneImage(
+            file,
+            hobbyId
+          );
         }
 
-        const { error } = await db.from("milestones").insert({
+        const payload = {
           hobby_id: hobbyId,
           title,
           type,
           status,
-          target_date: status === "working" && date ? date : null,
-          achieved_date: status === "achieved" ? (date || todayISO()) : null,
-          note,
-          image_path: imagePath || null,
-          visibility: "auto"
-        });
 
-        if (error) throw error;
-        inserted = true;
+          /*
+          * When working toward a milestone, Date means target date.
+          *
+          * When achieved, Date means achievement date.
+          *
+          * If this milestone previously had a target date we preserve
+          * it after achievement instead of throwing that history away.
+          */
+          target_date:
+            status === "working"
+              ? (date || null)
+              : (milestoneBeingEdited?.targetDate || null),
+
+          achieved_date:
+            status === "achieved"
+              ? (
+                  date ||
+                  milestoneBeingEdited?.achievedDate ||
+                  todayISO()
+                )
+              : null,
+
+          note,
+
+          /*
+          * No new image selected while editing:
+          * keep the old image.
+          *
+          * New image selected:
+          * replace it after the database update succeeds.
+          */
+          image_path:
+            newImagePath ||
+            milestoneBeingEdited?.imagePath ||
+            null,
+
+          /*
+          * Keep the milestone's existing visibility choice when editing.
+          * New milestones begin as Auto.
+          */
+          visibility:
+            milestoneBeingEdited?.visibility || "auto"
+        };
+
+        let result;
+
+        if (editingMilestoneId) {
+          result = await db
+            .from("milestones")
+            .update(payload)
+            .eq("id", editingMilestoneId);
+        } else {
+          result = await db
+            .from("milestones")
+            .insert(payload);
+        }
+
+        if (result.error) {
+          throw result.error;
+        }
+
+        databaseSaved = true;
+
+        /*
+        * Database now points at the new image, so the old one can
+        * safely be removed.
+        */
+        if (
+          editingMilestoneId &&
+          newImagePath &&
+          milestoneBeingEdited?.imagePath &&
+          milestoneBeingEdited.imagePath !== newImagePath
+        ) {
+          await deleteMilestoneImage(
+            milestoneBeingEdited.imagePath
+          );
+        }
 
         await reloadState();
+
+        editingMilestoneId = null;
+
         form.reset();
+
         $("#milestoneDialog")?.close();
+
         refresh();
+
       } catch (error) {
-        if (!inserted && imagePath) {
-          await deleteMilestoneImage(imagePath);
+
+        /*
+        * If upload succeeded but the database operation failed,
+        * remove the newly uploaded unused image.
+        */
+        if (!databaseSaved && newImagePath) {
+          await deleteMilestoneImage(newImagePath);
         }
-        console.error("Could not save milestone:", error);
+
+        console.error(
+          "Could not save milestone:",
+          error
+        );
+
         showDataError(error);
+
       } finally {
+
         if (submitButton) {
           submitButton.disabled = false;
           submitButton.textContent = originalButtonText;
         }
       }
     });
+
 
     $("#trophyImageForm").addEventListener("submit", async event => {
       event.preventDefault();
@@ -1962,3 +2399,4 @@ async function boot() {
 }
 
 boot();
+
