@@ -9,7 +9,7 @@ window.HOBBIES = [
     id: "running",
     name: "Running",
     page: "hobbies/running.html",
-    description: "Logging excerices, techniques, times and goals."
+    description: "Keeping track of my runs, times, and little improvements."
   },
   {
     id: "speedcubing",

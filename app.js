@@ -206,7 +206,7 @@ function renderSetupRequired(message = "") {
           <li>Put the Project URL and publishable key into <code>config.js</code>.</li>
         </ol>
         ${message ? `<p class="error-note">${escapeHTML(message)}</p>` : ""}
-        <p class="muted copy-small">Full instructions are included in <code>SUPABASE_SETUP.md</code>.</p>
+        <p class="muted copy-small">Setup details are in <code>README.md</code>.</p>
       </section>
     </main>`;
 }
@@ -218,7 +218,7 @@ function renderAuth(message = "") {
       <section class="auth-panel">
         <p class="eyebrow">OWNER ACCESS</p>
         <h1>Sign in</h1>
-        <p class="muted">Signing in unlocks private notes and editing. The public journal remains readable without an account.</p>
+        <p class="muted">My little corner for notes, edits, and unfinished thoughts.</p>
         <form id="authForm" class="auth-form">
           <label>Email<input name="email" type="email" autocomplete="email" required /></label>
           <label>Password<input name="password" type="password" autocomplete="current-password" minlength="6" required /></label>
@@ -228,8 +228,8 @@ function renderAuth(message = "") {
           </div>
         </form>
         <p id="authMessage" class="auth-message ${message ? "visible" : ""}">${escapeHTML(message)}</p>
-        <button class="text-button auth-back" id="backToPublicButton" type="button">← Back to public site</button>
-        <p class="muted copy-small auth-help">${window.SUPABASE_CONFIG?.showCreateAccount !== false ? "The create-account button is only needed for the first account. After that, disable new signups in Supabase." : "Use the account already created for this journal."}</p>
+        <button class="text-button auth-back" id="backToPublicButton" type="button">← Back to the journal</button>
+        
       </section>
     </main>`;
 
@@ -637,8 +637,8 @@ function homeDialogMarkup() {
     <div class="dialog-heading"><h2>Add curiosity</h2><button type="button" class="dialog-close" data-close="curiosityDialog">×</button></div>
     <div class="form-grid">
       <label class="full">What caught my attention?<input name="title" required /></label>
-      <label class="full">Link (optional)<input name="url" type="text" inputmode="url" autocomplete="url" placeholder="youtube.com or https://…" /></label>
-      <label class="full">Note<textarea name="note" placeholder="Why this looked interesting"></textarea></label>
+      <label class="full">Link (optional)<input name="url" type="text" inputmode="url" autocomplete="url" /></label>
+      <label class="full">Note<textarea name="note"></textarea></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="curiosityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
@@ -650,7 +650,7 @@ function homeDialogMarkup() {
       <label>Hobby<select name="hobbyId" required>${hobbies.map(hobby => `<option value="${escapeHTML(hobby.id)}">${escapeHTML(hobby.name)}</option>`).join("")}</select></label>
       <label>Type<select name="kind"><option value="learning">Learning</option><option value="project">Project</option></select></label>
     </div>
-    <p class="form-note">This creates a planned item. If the curiosity has a link, it is kept as a hobby resource.</p>
+    <p class="form-note">Saved as something to try. Any link comes along too.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="promoteCuriosityDialog">Cancel</button><button class="primary-button" type="submit">Move</button></div>
   </form></dialog>
 
@@ -660,7 +660,7 @@ function homeDialogMarkup() {
       <label>What?<select name="action"><option value="curiosity">Curiosity</option><option value="item">Item</option><option value="activity">Activity</option><option value="resource">Resource</option></select></label>
       <label id="quickAddHobbyField">Hobby<select name="hobbyId">${hobbies.map(hobby => `<option value="${escapeHTML(hobby.id)}">${escapeHTML(hobby.name)}</option>`).join("")}</select></label>
     </div>
-    <p class="form-note">Choose the kind of entry. The normal lightweight form opens next.</p>
+    
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="quickAddDialog">Cancel</button><button class="primary-button" type="submit">Continue</button></div>
   </form></dialog>`;
 }
@@ -669,20 +669,20 @@ function renderHome() {
   const allHobbies = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
   const registry = allHobbies;
   const owner = isOwnerMode();
-  document.title = "My Hobbies";
+  document.title = "Things I'm Tryin";
   $("#app").className = "";
   $("#app").innerHTML = `
     <header class="site-header">
       <div class="page-width header-inner">
-        <a class="site-title" href="index.html">My Hobbies</a>
+        <a class="site-title" href="index.html">Things I'm Tryin</a>
         ${headerActions()}
       </div>
     </header>
 
     <main class="page-width home-main">
       <section class="home-intro">
-        <h1>My hobbies</h1>
-        <p>A quiet place to keep track of what I’m learning, making, practicing, and saving for later.</p>
+        <h1>Things I’m tryin</h1>
+        <p>A bit of learning, a bit of making, and a lot of things I want to try.</p>
       </section>
 
       <section aria-labelledby="hobbiesTitle">
@@ -707,7 +707,7 @@ function renderHome() {
 
       <section class="home-search-section" aria-labelledby="searchTitle">
         <div class="section-line"><h2 id="searchTitle">Search</h2><span class="muted">Across hobbies</span></div>
-        <input id="globalSearch" class="global-search-input" type="search" placeholder="Search items, resources, and milestones…" autocomplete="off" />
+        <input aria-label="Search my journal" id="globalSearch" class="global-search-input" type="search" placeholder="Search items, resources, and milestones…" autocomplete="off" />
         <div id="globalSearchResults" class="global-search-results" hidden></div>
       </section>
 
@@ -718,38 +718,38 @@ function renderHome() {
             <span id="totalMinutes" class="muted"></span>
           </div>
           <div class="heatmap-wrap"><div id="homeHeatmap" class="heatmap" aria-label="Overall activity heatmap"></div></div>
-          ${owner ? `<div id="recentActivity" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">The heatmap is public; activity notes remain private.</p>`}
+          ${owner ? `<div id="recentActivity" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">A little record of the time I’ve put in.</p>`}
         </div>
 
         ${owner ? `<div class="plain-panel database-panel">
           <h2>Saved</h2>
-          <p class="muted copy-small">Changes are stored in Supabase and available on my other devices after I sign in.</p>
+          <p class="muted copy-small">My journal, saved across devices.</p>
           <div class="database-status"><span class="status-dot"></span><span>${escapeHTML(currentUser.email || "Signed in")}</span></div>
           <div class="saved-actions">
             <button id="exportButton" class="quiet-button" type="button">Download snapshot</button>
             <label class="quiet-button file-button">Restore snapshot<input id="restoreInput" type="file" accept="application/json,.json" hidden /></label>
           </div>
-          <p class="muted copy-small saved-note">Restore replaces the current journal data for this account. Trophy image files remain in Supabase Storage and are not embedded in the JSON.</p>
+          <p class="muted copy-small saved-note">Restoring replaces my current journal. Photos are stored separately and aren’t included in the snapshot.</p>
         </div>` : ""}
       </section>
 
       ${owner ? `<section class="home-owner-grid">
         <div class="plain-panel home-section-panel">
-          <div class="section-line"><h2>Recently touched</h2><span class="muted">Latest 5</span></div>
+          <div class="section-line"><h2>Lately</h2><span class="muted">Latest 5</span></div>
           <div id="recentlyTouched" class="simple-list"></div>
         </div>
         <div class="plain-panel home-section-panel">
-          <div class="section-line"><div><h2>Curiosity inbox</h2><p class="home-section-copy">Things that look interesting before I decide where they belong.</p></div><button id="addCuriosityButton" class="quiet-button" type="button">Add</button></div>
+          <div class="section-line"><div><h2>Curiosity inbox</h2><p class="home-section-copy">Things that caught my eye.</p></div><button id="addCuriosityButton" class="quiet-button" type="button">Add</button></div>
           <div id="curiosityList" class="curiosity-list"></div>
         </div>
       </section>
       <section class="rediscover-section">
-        <div class="section-line"><div><h2>Rediscover</h2><p class="home-section-copy">One older thing from the journal, quietly resurfaced.</p></div><span class="muted">Changes daily</span></div>
+        <div class="section-line"><div><h2>Rediscover</h2><p class="home-section-copy">Something I saved a while ago.</p></div><span class="muted">Changes daily</span></div>
         <div id="rediscoverCard"></div>
       </section>` : ""}
     </main>
 
-    <footer class="page-width footer"><span>Personal hobby journal</span></footer>
+    <footer class="page-width footer"><span>Still figuring things out.</span></footer>
     ${owner ? homeDialogMarkup() : ""}`;
 
   const activity = [...state.activity].sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
@@ -819,7 +819,7 @@ function renderHome() {
     $("#recentlyTouched").innerHTML = touched.length ? touched.map(item => {
       const hobby = hobbyFor(item.hobbyId);
       return `<a class="recent-touch-row" href="${escapeHTML(resultLink(item.hobbyId, `#item-${item.id}`))}"><span><span class="row-title">${escapeHTML(item.title)}</span><span class="row-meta">${escapeHTML(hobby?.name || item.hobbyId)} · ${itemKindLabel(item.kind)} · ${itemStatusLabel(item.status)}</span></span><span class="muted">${formatDate(item.touchedAt)}</span></a>`;
-    }).join("") : `<div class="empty-state compact-empty">Nothing touched yet.</div>`;
+    }).join("") : `<div class="empty-state compact-empty">Nothing here just yet.</div>`;
 
     function renderRediscover() {
       const candidates = [];
@@ -857,7 +857,7 @@ function renderHome() {
       const target = $("#rediscoverCard");
       if (!target) return;
       if (!candidates.length) {
-        target.innerHTML = `<div class="empty-state compact-empty">This will start surfacing things as the journal grows.</div>`;
+        target.innerHTML = `<div class="empty-state compact-empty">Nothing to rediscover just yet.</div>`;
         return;
       }
 
@@ -1014,9 +1014,9 @@ function dialogMarkup() {
       <label>Type<select name="kind"><option value="learning">Learning</option><option value="project">Project</option></select></label>
       <label>Status<select name="status"><option value="planned">Planned</option><option value="active">Active</option><option value="paused">Paused</option><option value="done">Done</option></select></label>
       <label>Progress %<input name="progress" type="number" min="0" max="100" value="0" /></label>
-      <label class="full">Tags<input name="tags" placeholder="theory, technique, reference" /></label>
-      <label class="full">Notes<textarea name="notes" placeholder="What I want to understand, build, or remember…"></textarea></label>
-      <label class="full">Next action<input name="nextAction" placeholder="The next small thing to do" /></label>
+      <label class="full">Tags (comma-separated)<input name="tags" /></label>
+      <label class="full">Notes<textarea name="notes"></textarea></label>
+      <label class="full">Next action<input name="nextAction" /></label>
     </div>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="itemDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
@@ -1027,10 +1027,10 @@ function dialogMarkup() {
       <label>Date<input name="date" type="date" required /></label>
       <label>Minutes<input name="minutes" type="number" min="1" max="1440" value="30" required /></label>
       <label class="full">Related item<select name="itemId" id="activityItemSelect"><option value="">General practice</option></select></label>
-      <label class="full">Note<input name="note" placeholder="What I worked on" /></label>
+      <label class="full">Note<input name="note" /></label>
       <label class="full checkbox-label"><input name="publicHeatmap" type="checkbox" value="yes" /> Include date + minutes in the public heatmap</label>
     </div>
-    <p class="form-note">Public heatmap entries expose only the date and minutes, not this note or related item.</p>
+    <p class="form-note">Only the date and time spent are shared. My notes stay private.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="activityDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
@@ -1039,13 +1039,13 @@ function dialogMarkup() {
     <input name="itemId" type="hidden" />
     <div class="form-grid">
       <label>Label<input name="label" required /></label>
-      <label>Type<input name="type" list="resourceTypeSuggestions" placeholder="Book, video, website…" /></label>
-      <datalist id="resourceTypeSuggestions"><option value="Article"></option><option value="Book"></option><option value="Video"></option><option value="Website"></option><option value="Paper"></option><option value="App"></option><option value="Course"></option><option value="Podcast"></option><option value="Reference"></option><option value="Person"></option><option value="Place"></option></datalist>
-      <label class="full">URL (optional)<input name="url" type="text" inputmode="url" autocomplete="url" placeholder="youtube.com or https://…" /></label>
-      <label class="full">Note<input name="note" placeholder="Why I saved this" /></label>
+      <label>Type<input name="type" list="resourceTypeSuggestions" /></label>
+      <datalist id="resourceTypeSuggestions"><option value="Article"></option><option value="Book"></option><option value="Video"></option><option value="Website"></option><option value="Paper"></option><option value="App"></option><option value="Course"></option><option value="Podcast"></option><option value="Reference"></option><option value="Note"></option><option value="Person"></option><option value="Place"></option></datalist>
+      <label class="full">URL (optional)<input name="url" type="text" inputmode="url" autocomplete="url" /></label>
+      <label class="full">Notes<textarea name="note" id="resourceNotes" rows="10"></textarea></label>
       <label id="resourceVisibilityField">Visibility<select name="visibility"><option value="public">Public</option><option value="private">Private</option></select></label>
     </div>
-    <p id="resourceFormNote" class="form-note">Hobby resources can be public or private.</p>
+    <p id="resourceFormNote" class="form-note">Notes, links, and things worth keeping.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="resourceDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
@@ -1059,10 +1059,10 @@ function dialogMarkup() {
       <label>Type<select name="type"><option value="first">First</option><option value="completion">Completion</option><option value="personal-best">Personal best</option><option value="consistency">Consistency</option><option value="project">Project</option><option value="custom">Custom</option></select></label>
       <label>Status<select name="status"><option value="working">Working toward</option><option value="achieved">Already achieved</option></select></label>
       <label>Date<input name="date" type="date" /></label>
-      <label class="full">Note<input name="note" placeholder="Optional context" /></label>
+      <label class="full">Note<input name="note" /></label>
       <label class="full">Trophy image (optional)<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" /></label>
     </div>
-    <p class="form-note">Milestones use automatic visibility by default: private while working toward them, public after achievement. You can override this later from the milestone row.</p>
+    <p class="form-note">Private while in progress, shared when achieved. Visibility can be changed anytime.</p>
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="milestoneDialog">Cancel</button><button class="primary-button" type="submit">Save</button></div>
   </form></dialog>
 
@@ -1079,19 +1079,19 @@ function dialogMarkup() {
     <div class="form-grid">
       <label class="full">What?<select name="action"><option value="item">Item</option><option value="activity">Activity</option><option value="resource">Resource</option><option value="curiosity">Curiosity</option></select></label>
     </div>
-    <p class="form-note">Curiosity is kept on the homepage; the other forms open here.</p>
+    
     <div class="dialog-actions"><button type="button" class="quiet-button" data-close="quickAddDialog">Cancel</button><button class="primary-button" type="submit">Continue</button></div>
   </form></dialog>`;
 }
 
 function renderHobbyShell(config) {
   const owner = isOwnerMode();
-  document.title = `${config.name} · My Hobbies`;
+  document.title = `${config.name} · Things I'm Tryin`;
   $("#app").className = "";
   $("#app").innerHTML = `
     <header class="site-header">
       <div class="page-width header-inner">
-        <div class="breadcrumbs"><a href="../index.html">My Hobbies</a> / ${escapeHTML(config.name)}</div>
+        <div class="breadcrumbs"><a href="../index.html">Things I'm Tryin</a> / ${escapeHTML(config.name)}</div>
         ${headerActions()}
       </div>
     </header>
@@ -1114,31 +1114,31 @@ function renderHobbyShell(config) {
       </section>
 
       ${owner ? `<section id="focus" class="section-block focus-section">
-        <div class="section-heading"><div><h2>Current focus</h2><p>One or two things I want to keep visible right now.</p></div></div>
+        <div class="section-heading"><div><h2>Current focus</h2><p>What I’m into right now.</p></div></div>
         <div id="focusList" class="focus-list"></div>
       </section>` : ""}
 
       <section id="overview" class="section-block ${owner ? "overview-grid" : ""}">
         <div>
-          <div class="section-heading"><div><h2>Activity</h2><p>Practice over time.</p></div></div>
+          <div class="section-heading"><div><h2>Activity</h2><p>A little time here and there.</p></div></div>
           <div class="heatmap-wrap"><div id="hobbyHeatmap" class="heatmap"></div></div>
           <div id="activityCaption" class="heatmap-caption"></div>
-          ${owner ? `<div id="activityList" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">Only dates and minutes included in the public heatmap are shown here.</p>`}
+          ${owner ? `<div id="activityList" class="simple-list"></div>` : `<p class="muted copy-small public-view-note">The time I’ve put in along the way.</p>`}
         </div>
         ${owner ? `<div class="notes-box">
-          <div class="section-heading"><div><h2>Notes</h2><p>A private scratchpad for this hobby.</p></div></div>
-          <textarea id="hobbyNotes" placeholder="Notes, ideas, reminders…"></textarea>
+          <div class="section-heading"><div><h2>Notes</h2><p>Just for me.</p></div></div>
+          <textarea aria-label="My hobby notes" id="hobbyNotes"></textarea>
           <div id="notesSaved" class="autosave-note">Saved to Supabase.</div>
         </div>` : ""}
       </section>
 
       <section id="work" class="section-block">
         <div class="section-heading">
-          <div><h2>Learning & projects</h2><p>Everything I’m working on in one place. The type is just a tag.</p></div>
+          <div><h2>Learning & projects</h2><p>Things I’m learning and making.</p></div>
           ${owner ? `<button id="addItemButton2" class="quiet-button" type="button">Add item</button>` : ""}
         </div>
         <div class="toolbar toolbar-three">
-          <input id="itemSearch" type="search" placeholder="Search items…" />
+          <input aria-label="Search items" id="itemSearch" type="search" placeholder="Search items…" />
           <select id="itemStatus"><option value="all">All statuses</option><option value="planned">Planned</option><option value="active">Active</option><option value="paused">Paused</option><option value="done">Done</option></select>
           <select id="itemKind"><option value="all">All types</option><option value="learning">Learning</option><option value="project">Project</option></select>
         </div>
@@ -1147,32 +1147,32 @@ function renderHobbyShell(config) {
 
       <section id="resources" class="section-block">
         <div class="section-heading">
-          <div><h2>Resources</h2><p>Links and references I want to keep for this hobby, without attaching them to a specific project.</p></div>
+          <div><h2>Resources</h2><p>Notes, links, and things I want to come back to.</p></div>
           ${owner ? `<button id="addHobbyResourceButton" class="quiet-button" type="button">Add resource</button>` : ""}
         </div>
         <div class="toolbar resource-toolbar">
-          <input id="resourceSearch" type="search" placeholder="Search resources…" />
+          <input aria-label="Search resources" id="resourceSearch" type="search" placeholder="Search resources…" />
         </div>
         <div id="hobbyResourceList" class="resource-library"></div>
       </section>
 
       <section id="milestones" class="section-block">
-        <div class="section-heading"><div><h2>Milestones</h2><p>${owner ? "What I’m working toward, and a trophy case for what I’ve achieved." : "Milestones and achievements I’ve chosen to share."}</p></div>${owner ? `<button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>` : ""}</div>
+        <div class="section-heading"><div><h2>Milestones</h2><p>${owner ? "Things I’m aiming for. Little wins along the way." : "A few wins along the way."}</p></div>${owner ? `<button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>` : ""}</div>
         <div id="milestoneList"></div>
       </section>
 
       <section id="history" class="section-block">
-        <div class="section-heading"><div><h2>History</h2><p>An automatic month-by-month record from things already logged.</p></div></div>
+        <div class="section-heading"><div><h2>History</h2><p>How it’s been going.</p></div></div>
         <div id="historyList" class="history-list"></div>
       </section>
 
       ${owner ? `<section id="archive" class="section-block">
-        <div class="section-heading"><div><h2>Archived items</h2><p>Things I want to keep in the record without keeping them in the main list.</p></div></div>
+        <div class="section-heading"><div><h2>Archived items</h2><p>Off the list, still part of the story.</p></div></div>
         <div id="archiveList" class="archive-list"></div>
       </section>` : ""}
     </main>
 
-    <footer class="page-width footer"><span>${escapeHTML(config.name)} · My Hobbies</span></footer>
+    <footer class="page-width footer"><span>${escapeHTML(config.name)} · Things I'm Tryin</span></footer>
     ${owner ? dialogMarkup() : ""}`;
 }
 
@@ -1259,7 +1259,7 @@ function initHobbyPage(config) {
     const focus = visibleItems().filter(x => x.isFocus).slice(0, 2);
     const target = $("#focusList");
     if (!focus.length) {
-      target.innerHTML = `<div class="empty-state compact-empty">Nothing pinned. Use “Pin” on an item when I want it kept in view.</div>`;
+      target.innerHTML = `<div class="empty-state compact-empty">Nothing on my mind here right now.</div>`;
       return;
     }
     target.innerHTML = focus.map(item => `<article class="focus-card">
@@ -1349,7 +1349,7 @@ function initHobbyPage(config) {
         </div>
         ${item.kind === "project" ? `<div class="resource-shelf">
           <div class="resource-heading"><h4>Resources</h4></div>
-          ${resources.length ? resources.map(resource => `<div class="resource-row" id="resource-${resource.id}"><div>${resource.url ? `<a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="resource-title-static">${escapeHTML(resource.label)}</span>`}${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<small>${escapeHTML(resource.note)}</small>` : ""}</div>${owner ? `<div class="row-actions"><button class="text-button" data-edit-resource="${resource.id}">Edit</button><button class="text-button" data-copy-link="resource-${resource.id}">Link</button><button class="text-button danger" data-delete-resource="${resource.id}">Remove</button></div>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
+          ${resources.length ? resources.map(resource => `<div class="resource-row" id="resource-${resource.id}"><div>${resource.url ? `<a href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="resource-title-static">${escapeHTML(resource.label)}</span>`}${resource.type ? `<small>${escapeHTML(resource.type)}</small>` : ""}${resource.note ? `<p class="resource-note">${escapeHTML(resource.note)}</p>` : ""}</div>${owner ? `<div class="row-actions"><button class="text-button" data-edit-resource="${resource.id}">Edit</button><button class="text-button" data-copy-link="resource-${resource.id}">Link</button><button class="text-button danger" data-delete-resource="${resource.id}">Remove</button></div>` : ""}</div>`).join("") : `<div class="muted copy-small">No saved resources.</div>`}
         </div>` : ""}
       </article>`;
     }).join("");
@@ -1442,10 +1442,10 @@ function initHobbyPage(config) {
       <div class="row-main">
         <div class="row-labels">${resource.type ? `<span class="type-tag">${escapeHTML(resource.type)}</span>` : ""}${resourceVisibilityControl(resource)}</div>
         ${resource.url ? `<a class="library-resource-title" href="${escapeHTML(resource.url)}" target="_blank" rel="noreferrer">${escapeHTML(resource.label)} ↗</a>` : `<span class="library-resource-title resource-title-static">${escapeHTML(resource.label)}</span>`}
-        ${resource.note ? `<p class="row-note">${escapeHTML(resource.note)}</p>` : ""}
+        ${resource.note ? `<p class="row-note resource-note">${escapeHTML(resource.note)}</p>` : ""}
       </div>
       ${owner ? `<div class="row-actions"><button class="mini-button" data-edit-hobby-resource="${resource.id}" type="button">Edit</button><button class="text-button" data-copy-link="resource-${resource.id}" type="button">Link</button><button class="text-button danger" data-delete-hobby-resource="${resource.id}" type="button">Delete</button></div>` : ""}
-    </article>`).join("") : `<div class="empty-state">${query ? "No matching resources." : "No hobby resources saved yet."}</div>`;
+    </article>`).join("") : `<div class="empty-state">${query ? "No matching resources." : "Nothing saved here yet."}</div>`;
 
     scrollToCurrentHash();
     if (!owner) return;
@@ -1861,7 +1861,7 @@ function initHobbyPage(config) {
     const events = buildHistoryEvents();
     const target = $("#historyList");
     if (!events.length) {
-      target.innerHTML = `<div class="empty-state">History will build itself from completed items and milestones${owner ? ", plus project activity" : ""}.</div>`;
+      target.innerHTML = `<div class="empty-state">Not much of a history yet.</div>`;
       return;
     }
     const years = new Map();
@@ -1956,8 +1956,8 @@ function initHobbyPage(config) {
     const standalone = !linkedItemId;
     $("#resourceVisibilityField").hidden = !standalone;
     $("#resourceFormNote").textContent = standalone
-      ? "This resource belongs to the hobby itself and can be public or private."
-      : "This resource belongs to a project and inherits that project's public/private setting.";
+      ? "Saved with this hobby. Public notes are visible to everyone."
+      : "Saved with this project. Notes share the project’s visibility.";
     $("#resourceDialog").showModal();
   }
 

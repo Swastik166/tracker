@@ -81,3 +81,17 @@ Everything entered through the hobby page is stored in Supabase.
 - `hobbies.js` — hobby registry
 - `hobbies/*.html` — one lightweight page per hobby
 - `supabase-setup.sql` — complete database/security setup
+
+## Resource notes and personal copy update
+
+Resources now have a large, resizable Notes text box for longer writing. Paragraphs
+and line breaks are preserved in both the hobby library and project resources.
+A URL is still optional; a title and notes can stand on their own. Notes are plain
+text, and their full content is included in resource search and JSON snapshots.
+
+This update uses the existing resources.note text column. Existing notes and
+snapshots remain compatible. No SQL migration or snapshot restore is needed.
+Do not rerun supabase-setup.sql for this update: it resets the database.
+
+The site copy now uses a more casual voice and the existing Things I'm Tryin name.
+Form writing prompts were removed, while field labels and visibility details remain.

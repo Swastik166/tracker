@@ -913,3 +913,30 @@ code {
     width: 100%;
   }
 }
+
+/* Room for long resource notes, on phones and desktops. */
+#resourceNotes {
+  min-height: 240px;
+  line-height: 1.65;
+}
+.resource-note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+.resource-row > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+.resource-row .resource-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.resource-row > .row-actions,
+.library-resource-row > .row-actions {
+  flex-shrink: 0;
+}
+@media (max-width: 560px) {
+  .resource-row { flex-direction: column; }
+}
