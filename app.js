@@ -682,7 +682,7 @@ function renderHome() {
     <main class="page-width home-main">
       <section class="home-intro">
         <h1>Things I’m tryin</h1>
-        <p>A bit of learning, a bit of making, and a lot of things I want to try.</p>
+        <p>Just trying to track all the new things I get myself into.</p>
       </section>
 
       <section aria-labelledby="hobbiesTitle">
@@ -1157,7 +1157,7 @@ function renderHobbyShell(config) {
       </section>
 
       <section id="milestones" class="section-block">
-        <div class="section-heading"><div><h2>Milestones</h2><p>${owner ? "Things I’m aiming for. Little wins along the way." : "A few wins along the way."}</p></div>${owner ? `<button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>` : ""}</div>
+        <div class="section-heading"><div><h2>Milestones</h2><p>${owner ? "Things I’m aiming for. Little wins along the way." : "Some things I've completed (I hope)."}</p></div>${owner ? `<button id="addMilestoneButton" class="quiet-button" type="button">Add milestone</button>` : ""}</div>
         <div id="milestoneList"></div>
       </section>
 

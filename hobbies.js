@@ -7,7 +7,7 @@ window.HOBBIES = [
   },
   {
     id: "running",
-    name: "Running",
+    name: "movements",
     page: "hobbies/running.html",
     description: "Keeping track of my runs, times, and little improvements."
   },
