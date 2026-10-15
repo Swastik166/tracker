@@ -940,3 +940,19 @@ code {
 @media (max-width: 560px) {
   .resource-row { flex-direction: column; }
 }
+
+/* Full-journal search and destinations. */
+.search-result-main { min-width: 0; }
+.search-result-snippet {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.search-result-title { overflow-wrap: anywhere; }
+.activity-row, .curiosity-row, .archive-row, #hobbyNotes { scroll-margin-top: 86px; }
+.activity-row:target, .curiosity-row:target, .archive-row:target, #hobbyNotes:target {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+}

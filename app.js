@@ -665,6 +665,59 @@ function homeDialogMarkup() {
   </form></dialog>`;
 }
 
+// Search only the state already loaded for the current visitor by Supabase.
+function searchJournal(data, hobbies, query, owner) {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return [];
+  const results = [];
+  const hobbyMap = new Map(hobbies.map(hobby => [hobby.id, hobby]));
+  const itemMap = new Map(data.items.map(item => [item.id, item]));
+  const link = (hobbyId, anchor) => {
+    const hobby = hobbyMap.get(hobbyId);
+    return hobby ? `${hobby.page}#${anchor}` : 'index.html#hobbiesTitle';
+  };
+  function add(result, fields) {
+    const hobby = hobbyMap.get(result.hobbyId);
+    const text = [...fields, result.type, result.detail, hobby?.name].filter(value => value != null).join(' ').replace(/\s+/g, ' ').trim();
+    const lower = text.toLowerCase();
+    if (!terms.every(term => lower.includes(term))) return;
+    const positions = terms.map(term => lower.indexOf(term)).filter(index => index >= 0);
+    const start = Math.max(0, Math.min(...positions) - 45);
+    result.snippet = `${start ? '…' : ''}${text.slice(start, start + 200)}${text.length > start + 200 ? '…' : ''}`;
+    results.push(result);
+  }
+  hobbies.forEach(hobby => add({ hobbyId: hobby.id, type: 'Hobby', title: hobby.name, href: hobby.page }, [hobby.name, hobby.description]));
+  data.items.forEach(item => {
+    if (item.archived && !owner) return;
+    add({ hobbyId: item.hobbyId, type: itemKindLabel(item.kind), title: item.title, detail: `${item.archived ? 'Archived · ' : ''}${itemStatusLabel(item.status)}`, href: link(item.hobbyId, `item-${item.id}`) },
+      [item.title, item.notes, owner ? item.nextAction : '', ...(item.tags || []), item.completedAt, item.createdAt]);
+  });
+  data.resources.forEach(resource => {
+    const parent = itemMap.get(resource.itemId);
+    if (parent?.archived && !owner) return;
+    const hobbyId = resource.hobbyId || parent?.hobbyId;
+    const anchor = parent && (parent.archived || parent.kind !== 'project') ? `item-${parent.id}` : `resource-${resource.id}`;
+    add({ hobbyId, type: 'Resource', title: resource.label, detail: [resource.type, parent ? `For ${parent.title}` : '', parent?.archived ? 'Archived' : ''].filter(Boolean).join(' · '), href: link(hobbyId, anchor) },
+      [resource.label, resource.note, resource.url, resource.type, parent?.title]);
+  });
+  data.milestones.forEach(milestone => add({ hobbyId: milestone.hobbyId, type: 'Milestone', title: milestone.title, detail: milestone.status === 'achieved' ? 'Achieved' : 'Working toward', href: link(milestone.hobbyId, `milestone-${milestone.id}`) },
+    [milestone.title, milestone.note, milestone.type, milestone.targetDate, milestone.achievedDate]));
+  data.activity.forEach(entry => {
+    const parent = itemMap.get(entry.itemId);
+    const detail = `${formatDate(entry.date)} · ${entry.minutes} min · ${minutesLabel(entry.minutes)}`;
+    add({ hobbyId: entry.hobbyId, type: 'Activity', title: owner ? (entry.note || parent?.title || 'Practice session').split('\n')[0].slice(0, 100) : 'Practice session', detail, href: link(entry.hobbyId, owner ? `activity-${entry.id}` : 'overview') },
+      [owner ? entry.note : '', owner ? parent?.title : '', entry.date, detail]);
+  });
+  if (owner) {
+    Object.entries(data.hobbyNotes).forEach(([hobbyId, note]) => {
+      if (!note.trim()) return;
+      add({ hobbyId, type: 'Hobby notes', title: `${hobbyMap.get(hobbyId)?.name || hobbyId} notes`, detail: 'Private', href: link(hobbyId, 'hobbyNotes') }, [note]);
+    });
+    data.curiosities.forEach(entry => add({ hobbyId: entry.hobbyId, type: 'Curiosity', title: entry.title, detail: 'Curiosity inbox', href: `#curiosity-${entry.id}` }, [entry.title, entry.note, entry.url]));
+  }
+  return results;
+}
+
 function renderHome() {
   const allHobbies = Array.isArray(window.HOBBIES) ? window.HOBBIES : [];
   const registry = allHobbies;
@@ -707,7 +760,7 @@ function renderHome() {
 
       <section class="home-search-section" aria-labelledby="searchTitle">
         <div class="section-line"><h2 id="searchTitle">Search</h2><span class="muted">Across hobbies</span></div>
-        <input aria-label="Search my journal" id="globalSearch" class="global-search-input" type="search" placeholder="Search items, resources, and milestones…" autocomplete="off" />
+        <input aria-label="Search my journal" id="globalSearch" class="global-search-input" type="search" placeholder="Search everything…" autocomplete="off" />
         <div id="globalSearchResults" class="global-search-results" hidden></div>
       </section>
 
@@ -775,27 +828,12 @@ function renderHome() {
       return;
     }
 
-    const results = [];
-    state.items.filter(item => !item.archived).forEach(item => {
-      const haystack = [item.title, item.notes, item.nextAction, ...(item.tags || [])].join(" ").toLowerCase();
-      if (haystack.includes(query)) results.push({ hobbyId: item.hobbyId, type: itemKindLabel(item.kind), title: item.title, detail: itemStatusLabel(item.status), href: resultLink(item.hobbyId, `#item-${item.id}`) });
-    });
-    state.resources.forEach(resource => {
-      const haystack = [resource.label, resource.type, resource.note, resource.url].join(" ").toLowerCase();
-      if (!haystack.includes(query)) return;
-      const parent = resource.itemId ? state.items.find(item => item.id === resource.itemId) : null;
-      results.push({ hobbyId: resource.hobbyId || parent?.hobbyId || "", type: "Resource", title: resource.label, detail: resource.type || (parent ? `For ${parent.title}` : "Hobby resource"), href: resultLink(resource.hobbyId || parent?.hobbyId, `#resource-${resource.id}`) });
-    });
-    state.milestones.forEach(milestone => {
-      const haystack = [milestone.title, milestone.type, milestone.note].join(" ").toLowerCase();
-      if (haystack.includes(query)) results.push({ hobbyId: milestone.hobbyId, type: "Milestone", title: milestone.title, detail: milestone.status === "achieved" ? "Achieved" : "Working toward", href: resultLink(milestone.hobbyId, `#milestone-${milestone.id}`) });
-    });
-
+    const results = searchJournal(state, allHobbies, query, owner);
     target.hidden = false;
-    target.innerHTML = results.length ? results.slice(0, 12).map(result => {
+    target.innerHTML = results.length ? `<p class="row-meta" role="status">${results.length} ${results.length === 1 ? "match" : "matches"}</p>` + results.map(result => {
       const hobby = hobbyFor(result.hobbyId);
-      return `<a class="search-result-row" href="${escapeHTML(result.href)}"><span><span class="search-result-title">${escapeHTML(result.title)}</span><span class="row-meta">${escapeHTML(result.type)}${result.detail ? ` · ${escapeHTML(result.detail)}` : ""}</span></span><span class="muted">${escapeHTML(hobby?.name || result.hobbyId || "")}</span></a>`;
-    }).join("") : `<div class="empty-state compact-empty">No matches.</div>`;
+      return `<a class="search-result-row" href="${escapeHTML(result.href)}"><span class="search-result-main"><span class="search-result-title">${escapeHTML(result.title)}</span><span class="row-meta">${escapeHTML(result.type)}${result.detail ? ` · ${escapeHTML(result.detail)}` : ""}</span><span class="search-result-snippet">${escapeHTML(result.snippet)}</span></span><span class="muted">${escapeHTML(hobby?.name || result.hobbyId || "")}</span></a>`;
+    }).join("") : `<div class="empty-state compact-empty" role="status">No matches.</div>`;
   }
 
   $("#globalSearch")?.addEventListener("input", renderGlobalSearch);
@@ -885,7 +923,7 @@ function renderHome() {
       const curiosities = [...state.curiosities].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       target.innerHTML = curiosities.length ? curiosities.map(item => {
         const oldHobby = item.hobbyId ? hobbyFor(item.hobbyId) : null;
-        return `<article class="curiosity-row"><div class="curiosity-top"><div class="row-main"><div class="row-title">${escapeHTML(item.title)}</div>${oldHobby ? `<div class="row-meta">Previously filed under ${escapeHTML(oldHobby.name)}</div>` : ""}${item.note ? `<p class="row-note">${escapeHTML(item.note)}</p>` : ""}${item.url ? `<div class="row-meta"><a href="${escapeHTML(item.url)}" target="_blank" rel="noreferrer">Open link ↗</a></div>` : ""}</div><div class="row-actions"><button class="mini-button" data-promote-curiosity="${item.id}" type="button">Move to hobby</button><button class="text-button danger" data-delete-curiosity="${item.id}" type="button">Delete</button></div></div></article>`;
+        return `<article class="curiosity-row" id="curiosity-${item.id}"><div class="curiosity-top"><div class="row-main"><div class="row-title">${escapeHTML(item.title)}</div>${oldHobby ? `<div class="row-meta">Previously filed under ${escapeHTML(oldHobby.name)}</div>` : ""}${item.note ? `<p class="row-note">${escapeHTML(item.note)}</p>` : ""}${item.url ? `<div class="row-meta"><a href="${escapeHTML(item.url)}" target="_blank" rel="noreferrer">Open link ↗</a></div>` : ""}</div><div class="row-actions"><button class="mini-button" data-promote-curiosity="${item.id}" type="button">Move to hobby</button><button class="text-button danger" data-delete-curiosity="${item.id}" type="button">Delete</button></div></div></article>`;
       }).join("") : `<div class="empty-state compact-empty">Nothing waiting here.</div>`;
 
       $$('[data-promote-curiosity]').forEach(button => button.addEventListener("click", () => {
@@ -1003,6 +1041,7 @@ function renderHome() {
   }
 
   bindGlobalHeader();
+  scrollToCurrentHash();
 }
 
 function dialogMarkup() {
@@ -1282,7 +1321,7 @@ function initHobbyPage(config) {
     const target = $("#activityList");
     target.innerHTML = entries.map(entry => {
       const item = state.items.find(x => x.id === entry.itemId);
-      return `<div class="simple-row activity-row">
+      return `<div class="simple-row activity-row" id="activity-${entry.id}">
         <div class="row-main">
           <div>${escapeHTML(entry.note || item?.title || "Practice session")}</div>
           <div class="row-meta">${entry.minutes} min · ${formatDate(entry.date)}${item ? ` · ${escapeHTML(item.title)}` : ""}${entry.publicHeatmap ? " · public heatmap" : " · private"}</div>
@@ -1888,7 +1927,7 @@ function initHobbyPage(config) {
       target.innerHTML = `<div class="empty-state">Archive is empty.</div>`;
       return;
     }
-    target.innerHTML = archived.map(item => `<article class="archive-row"><div class="archive-top"><div><div class="row-title">${escapeHTML(item.title)}</div><div class="row-meta">${itemKindLabel(item.kind)} · ${itemStatusLabel(item.status)} · last touched ${formatDate(item.touchedAt)}</div></div><div class="row-actions"><button class="mini-button" data-restore-item="${item.id}">Restore</button><button class="text-button danger" data-delete-item="${item.id}">Delete permanently</button></div></div></article>`).join("");
+    target.innerHTML = archived.map(item => `<article class="archive-row" id="item-${item.id}"><div class="archive-top"><div><div class="row-title">${escapeHTML(item.title)}</div><div class="row-meta">${itemKindLabel(item.kind)} · ${itemStatusLabel(item.status)} · last touched ${formatDate(item.touchedAt)}</div></div><div class="row-actions"><button class="mini-button" data-restore-item="${item.id}">Restore</button><button class="text-button danger" data-delete-item="${item.id}">Delete permanently</button></div></div></article>`).join("");
 
     $$('[data-restore-item]').forEach(button => button.addEventListener("click", async () => {
       await runWrite(() => db.from("items").update({ archived: false }).eq("id", button.dataset.restoreItem));
@@ -2340,6 +2379,7 @@ function initHobbyPage(config) {
   }
 
   refresh();
+  scrollToCurrentHash();
 }
 
 function renderCurrentPage() {
